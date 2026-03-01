@@ -1,0 +1,23 @@
+[package]
+name = "cortex-embed"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "2", features = ["napi6", "serde-json"] }
+napi-derive = "2"
+fastembed = "4"
+rusqlite = { version = "0.31", features = ["bundled"] }
+sqlite-vec = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+lto = true
+strip = true

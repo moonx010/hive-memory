@@ -1,0 +1,18 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.DS_Store
+
+# Cortex local data (user's memory store)
+.cortex-data/
+
+# Auto-generated local context file
+.cortex.md
+
+# Native module build artifacts
+native/*.node
+native/index.js
+native/index.d.ts
+native/target/
+native/node_modules/
