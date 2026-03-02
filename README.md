@@ -171,15 +171,31 @@ Hive Memory writes a `.cortex.md` file in each registered project directory. Thi
 
 ## Semantic Search
 
-Hive Memory includes an optional native module (Rust + NAPI) for embedding-based semantic search. Without it, Hive Memory uses keyword matching which works well for most use cases.
+Hive Memory supports embedding-based semantic search with a 3-tier priority system:
 
-To enable semantic search:
+| Priority | Backend | How to enable |
+|----------|---------|---------------|
+| 1 (best) | **Native** (Rust + FastEmbed) | `cd native && npm install && npm run build` |
+| 2 | **JS** (transformers.js) | `npm install @huggingface/transformers` |
+| 3 | **Keyword-only** | No setup needed (default) |
+
+### Quick Setup (recommended)
+
+```bash
+npm install @huggingface/transformers
+```
+
+This enables semantic search using `Xenova/all-MiniLM-L6-v2` (384-dim, ~23MB, auto-downloaded on first use). No Rust toolchain required — works with just `npm install`.
+
+### Native (advanced)
+
+For maximum performance, build the native Rust module:
 
 ```bash
 cd native && npm install && npm run build
 ```
 
-This requires a Rust toolchain. The native module is **not included in the npm package** — build it locally if needed.
+This requires a Rust toolchain. The native module uses FastEmbed + SQLite vec0 for faster inference and persistent storage.
 
 ## Development
 
