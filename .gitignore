@@ -16,3 +16,6 @@ native/index.js
 native/index.d.ts
 native/target/
 native/node_modules/
+
+# Smithery build artifacts
+.smithery/

@@ -95,7 +95,7 @@ export class CortexStore {
 
     // Build vector score map for semantic boosting
     const vectorScores = new Map<string, number>();
-    const vecHits = this.embed.search(query, limit * 2);
+    const vecHits = await this.embed.search(query, limit * 2);
     for (const hit of vecHits) {
       try {
         const meta = hit.metadata ? JSON.parse(hit.metadata) : null;
@@ -156,7 +156,7 @@ export class CortexStore {
     }
     await this.saveIndex(index);
 
-    this.embed.addText(
+    await this.embed.addText(
       `project:${entry.id}`,
       `${entry.name} ${entry.description} ${entry.tags.join(" ")}`,
       JSON.stringify({ type: "project", project: entry.id }),
@@ -299,7 +299,7 @@ export class CortexStore {
       await writeFile(path, header + line, "utf-8");
     }
 
-    this.embed.addText(
+    await this.embed.addText(
       `memory:${projectId}:${category}:${entry.createdAt}`,
       content,
       JSON.stringify({ type: "memory", project: projectId, category }),
@@ -354,7 +354,7 @@ export class CortexStore {
     }
 
     // Vector search — merge with keyword results
-    const vecHits = this.embed.search(query, limit * 2);
+    const vecHits = await this.embed.search(query, limit * 2);
     for (const hit of vecHits) {
       try {
         const meta = hit.metadata ? JSON.parse(hit.metadata) : null;
@@ -564,7 +564,7 @@ export class CortexStore {
       await this.saveIndex(projectIndex);
     }
 
-    this.embed.addText(
+    await this.embed.addText(
       `group:${group.id}`,
       `${group.name} ${group.description} ${group.tags.join(" ")}`,
       JSON.stringify({ type: "group", group: group.id }),
@@ -718,7 +718,7 @@ export class CortexStore {
 
     // Build vector score map
     const vectorScores = new Map<string, number>();
-    const vecHits = this.embed.search(query, 10);
+    const vecHits = await this.embed.search(query, 10);
     for (const hit of vecHits) {
       try {
         const meta = hit.metadata ? JSON.parse(hit.metadata) : null;
@@ -765,7 +765,7 @@ export class CortexStore {
       await this.saveGroupIndex(groupIndex);
     }
 
-    this.embed.addText(
+    await this.embed.addText(
       `guide:${groupId}:${safeName}`,
       content,
       JSON.stringify({ type: "guide", group: groupId, file: safeName }),
@@ -805,7 +805,7 @@ export class CortexStore {
       await writeFile(path, header + line, "utf-8");
     }
 
-    this.embed.addText(
+    await this.embed.addText(
       `gmem:${groupId}:${category}:${entry.createdAt}`,
       content,
       JSON.stringify({ type: "gmemory", group: groupId, category }),
@@ -845,7 +845,7 @@ export class CortexStore {
     }
 
     // Vector search for group memories
-    const vecHits = this.embed.search(query, limit * 2);
+    const vecHits = await this.embed.search(query, limit * 2);
     for (const hit of vecHits) {
       try {
         const meta = hit.metadata ? JSON.parse(hit.metadata) : null;
@@ -1045,7 +1045,7 @@ export class CortexStore {
     // Index all projects
     const index = await this.getIndex();
     for (const p of index.projects) {
-      this.embed.addText(
+      await this.embed.addText(
         `project:${p.id}`,
         `${p.name} ${p.description} ${p.tags.join(" ")}`,
         JSON.stringify({ type: "project", project: p.id }),
@@ -1055,7 +1055,7 @@ export class CortexStore {
     // Index all groups
     const groupIndex = await this.getGroupIndex();
     for (const g of groupIndex.groups) {
-      this.embed.addText(
+      await this.embed.addText(
         `group:${g.id}`,
         `${g.name} ${g.description} ${g.tags.join(" ")}`,
         JSON.stringify({ type: "group", group: g.id }),
@@ -1067,7 +1067,7 @@ export class CortexStore {
         const files = (await readdir(guidesDir)).filter((f) => f.endsWith(".md"));
         for (const file of files) {
           const content = await readFile(join(guidesDir, file), "utf-8");
-          this.embed.addText(
+          await this.embed.addText(
             `guide:${g.id}:${file}`,
             content,
             JSON.stringify({ type: "guide", group: g.id, file }),
@@ -1094,7 +1094,7 @@ export class CortexStore {
           // Extract date from first line if present
           const dateMatch = section.match(/^(\d{4}-\d{2}-\d{2})/);
           const ts = dateMatch ? dateMatch[1] : `s${i}`;
-          this.embed.addText(
+          await this.embed.addText(
             `memory:${proj.id}:${cat}:${ts}`,
             section,
             JSON.stringify({ type: "memory", project: proj.id, category: cat }),
@@ -1120,7 +1120,7 @@ export class CortexStore {
           if (!section) continue;
           const dateMatch = section.match(/^(\d{4}-\d{2}-\d{2})/);
           const ts = dateMatch ? dateMatch[1] : `s${i}`;
-          this.embed.addText(
+          await this.embed.addText(
             `gmem:${g.id}:${cat}:${ts}`,
             section,
             JSON.stringify({ type: "gmemory", group: g.id, category: cat }),

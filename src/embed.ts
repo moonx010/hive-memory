@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { platform, arch } from "node:os";
+import { JsEmbedBackend } from "./js-embed.js";
 
 interface NativeSearchResult {
   id: string;
@@ -32,78 +33,135 @@ export interface EmbedSearchResult {
   metadata: string | null;
 }
 
+type BackendType = "native" | "js" | "none";
+
 export class EmbedService {
-  private index: NativeEmbedIndex | null = null;
+  private nativeIndex: NativeEmbedIndex | null = null;
+  private jsBackend: JsEmbedBackend | null = null;
   public available = false;
 
+  get backend(): BackendType {
+    if (this.nativeIndex) return "native";
+    if (this.jsBackend) return "js";
+    return "none";
+  }
+
   async init(dataDir: string): Promise<void> {
+    // Priority 1: Native Rust module
+    if (await this.tryNative(dataDir)) return;
+
+    // Priority 2: JS (transformers.js)
+    if (await this.tryJs(dataDir)) return;
+
+    // Priority 3: No embedding — keyword-only
+    this.available = false;
+  }
+
+  private async tryNative(dataDir: string): Promise<boolean> {
     try {
       const thisDir = dirname(fileURLToPath(import.meta.url));
       const projectRoot = dirname(thisDir); // up from src/ or dist/
       const nodeName = `cortex-embed.${platform()}-${arch()}.node`;
       const nativePath = join(projectRoot, "native", nodeName);
 
-      if (!existsSync(nativePath)) {
-        this.available = false;
-        return;
-      }
+      if (!existsSync(nativePath)) return false;
 
-      // Use createRequire for .node native addons (ESM import doesn't work for them)
       const require = createRequire(import.meta.url);
       const mod = require(nativePath) as NativeModule;
       const dbPath = join(dataDir, "embeddings.db");
       const cacheDir = join(dataDir, "models");
-      this.index = new mod.EmbedIndex(dbPath, cacheDir, 384);
+      this.nativeIndex = new mod.EmbedIndex(dbPath, cacheDir, 384);
       this.available = true;
+      return true;
     } catch {
-      // Native module not available — fall back to keyword search
-      this.available = false;
+      return false;
     }
   }
 
-  addText(id: string, text: string, metadata?: string): void {
-    if (!this.index) return;
+  private async tryJs(dataDir: string): Promise<boolean> {
     try {
-      this.index.addText(id, text, metadata);
+      const backend = new JsEmbedBackend();
+      const ok = await backend.init(dataDir);
+      if (ok) {
+        this.jsBackend = backend;
+        this.available = true;
+        return true;
+      }
+      return false;
     } catch {
-      // Silently fail — never break the main flow
+      return false;
     }
   }
 
-  search(query: string, limit: number): EmbedSearchResult[] {
-    if (!this.index) return [];
-    try {
-      return this.index.searchText(query, limit);
-    } catch {
-      return [];
+  async addText(id: string, text: string, metadata?: string): Promise<void> {
+    if (this.nativeIndex) {
+      try {
+        this.nativeIndex.addText(id, text, metadata);
+      } catch {
+        // Silently fail — never break the main flow
+      }
+      return;
+    }
+    if (this.jsBackend) {
+      await this.jsBackend.addText(id, text, metadata);
     }
   }
 
-  remove(id: string): void {
-    if (!this.index) return;
-    try {
-      this.index.remove(id);
-    } catch {
-      // Silently fail
+  async search(query: string, limit: number): Promise<EmbedSearchResult[]> {
+    if (this.nativeIndex) {
+      try {
+        return this.nativeIndex.searchText(query, limit);
+      } catch {
+        return [];
+      }
+    }
+    if (this.jsBackend) {
+      return this.jsBackend.search(query, limit);
+    }
+    return [];
+  }
+
+  async remove(id: string): Promise<void> {
+    if (this.nativeIndex) {
+      try {
+        this.nativeIndex.remove(id);
+      } catch {
+        // Silently fail
+      }
+      return;
+    }
+    if (this.jsBackend) {
+      this.jsBackend.remove(id);
     }
   }
 
   count(): number {
-    if (!this.index) return 0;
-    try {
-      return this.index.count();
-    } catch {
-      return 0;
+    if (this.nativeIndex) {
+      try {
+        return this.nativeIndex.count();
+      } catch {
+        return 0;
+      }
     }
+    if (this.jsBackend) {
+      return this.jsBackend.count();
+    }
+    return 0;
   }
 
-  close(): void {
-    if (!this.index) return;
-    try {
-      this.index.close();
-      this.index = null;
-    } catch {
-      // Silently fail
+  async close(): Promise<void> {
+    if (this.nativeIndex) {
+      try {
+        this.nativeIndex.close();
+        this.nativeIndex = null;
+      } catch {
+        // Silently fail
+      }
+      return;
+    }
+    if (this.jsBackend) {
+      await this.jsBackend.close();
+      this.jsBackend = null;
     }
   }
 }
