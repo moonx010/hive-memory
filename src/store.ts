@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, readdir, stat } from "node:fs/promises";
+import { readFile, writeFile, rename, mkdir, readdir, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, basename } from "node:path";
 import type {
@@ -18,11 +18,17 @@ import { EmbedService } from "./embed.js";
 export class CortexStore {
   private dataDir: string;
   private localContextFilename: string;
+  private localContextEnabled: boolean;
   private embed = new EmbedService();
 
   constructor(config: CortexConfig) {
     this.dataDir = config.dataDir;
     this.localContextFilename = config.localContext.filename;
+    this.localContextEnabled = config.localContext.enabled ?? true;
+  }
+
+  get localSyncEnabled(): boolean {
+    return this.localContextEnabled;
   }
 
   async init(): Promise<void> {
@@ -240,7 +246,7 @@ export class CortexStore {
     await writeFile(join(sessionsDir, filename), content, "utf-8");
 
     // Update project summary with latest session
-    let summary = await this.getProjectSummary(projectId);
+    const summary = await this.getProjectSummary(projectId);
     if (summary) {
       summary.lastSession = {
         date: session.date,
@@ -390,10 +396,25 @@ export class CortexStore {
   // --- Local Context Sync ---
 
   /**
+   * Write file atomically via temp + rename to prevent corruption
+   * from concurrent writers (last-write-wins, no partial writes).
+   */
+  private async atomicWriteFile(
+    filePath: string,
+    data: string,
+  ): Promise<void> {
+    const tmp = `${filePath}.${process.pid}.tmp`;
+    await writeFile(tmp, data, "utf-8");
+    await rename(tmp, filePath);
+  }
+
+  /**
    * Write a .cortex.md into the project's actual directory.
    * This gives Claude Code immediate detailed context when opening that project.
    */
   async syncLocalContext(projectId: string): Promise<string | null> {
+    if (!this.localContextEnabled) return null;
+
     const index = await this.getIndex();
     const proj = index.projects.find((p) => p.id === projectId);
     if (!proj || !existsSync(proj.path)) return null;
@@ -497,7 +518,7 @@ export class CortexStore {
     }
 
     const localPath = join(proj.path, this.localContextFilename);
-    await writeFile(localPath, md, "utf-8");
+    await this.atomicWriteFile(localPath, md);
     return localPath;
   }
 

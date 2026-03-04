@@ -1,6 +1,29 @@
-# Hive Memory
+<p align="center">
 
-> Cross-project memory layer for AI coding agents.
+```
+ ██╗  ██╗██╗██╗   ██╗███████╗
+ ██║  ██║██║██║   ██║██╔════╝
+ ███████║██║██║   ██║█████╗
+ ██╔══██║██║╚██╗ ██╔╝██╔══╝
+ ██║  ██║██║ ╚████╔╝ ███████╗
+ ╚═╝  ╚═╝╚═╝  ╚═══╝  ╚══════╝
+ ███╗   ███╗███████╗███╗   ███╗ ██████╗ ██████╗ ██╗   ██╗
+ ████╗ ████║██╔════╝████╗ ████║██╔═══██╗██╔══██╗╚██╗ ██╔╝
+ ██╔████╔██║█████╗  ██╔████╔██║██║   ██║██████╔╝ ╚████╔╝
+ ██║╚██╔╝██║██╔══╝  ██║╚██╔╝██║██║   ██║██╔══██╗  ╚██╔╝
+ ██║ ╚═╝ ██║███████╗██║ ╚═╝ ██║╚██████╔╝██║  ██║   ██║
+ ╚═╝     ╚═╝╚══════╝╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═╝   ╚═╝
+```
+
+**Cross-project memory layer for AI coding agents**
+
+[![npm](https://img.shields.io/npm/v/hive-memory)](https://www.npmjs.com/package/hive-memory)
+[![license](https://img.shields.io/npm/l/hive-memory)](LICENSE)
+[![node](https://img.shields.io/node/v/hive-memory)](package.json)
+
+</p>
+
+---
 
 Hive Memory is an [MCP](https://modelcontextprotocol.io) server that gives AI coding agents persistent memory across projects. It stores decisions, learnings, session progress, and project context in a local knowledge base — so your agent can pick up where it left off, even across different workspaces.
 
@@ -34,9 +57,16 @@ Add to `~/.claude/settings.json`:
     "hive-memory": {
       "command": "hive-memory"
     }
+  },
+  "permissions": {
+    "allow": [
+      "mcp__hive-memory__*"
+    ]
   }
 }
 ```
+
+> The `permissions.allow` entry auto-approves all Hive Memory tools so Claude won't prompt for permission every session. Without it, you'll have to manually approve each tool call.
 
 ### Claude Desktop
 
@@ -142,15 +172,15 @@ Hive Memory stores all data under `~/.cortex/` as plain JSON and Markdown files.
 
 ## Configuration
 
-### Data Directory
+### Environment Variables
 
-By default, Hive Memory stores data in `~/.cortex/`. Override with:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CORTEX_DATA_DIR` | `~/.cortex` | Data storage directory |
+| `CORTEX_LOCAL_SYNC` | `true` | Set to `"false"` to disable writing `.cortex.md` into project directories |
+| `CORTEX_LOCAL_FILENAME` | `.cortex.md` | Custom filename for local context files |
 
-```bash
-CORTEX_DATA_DIR=/custom/path hive-memory
-```
-
-Or in your MCP config:
+Example with custom config:
 
 ```json
 {
@@ -158,7 +188,8 @@ Or in your MCP config:
     "hive-memory": {
       "command": "hive-memory",
       "env": {
-        "CORTEX_DATA_DIR": "/custom/path"
+        "CORTEX_DATA_DIR": "/custom/path",
+        "CORTEX_LOCAL_SYNC": "false"
       }
     }
   }
@@ -167,11 +198,13 @@ Or in your MCP config:
 
 ### Local Context File (.cortex.md)
 
-Hive Memory writes a `.cortex.md` file in each registered project directory. This file contains a snapshot of the project's current context — summary, recent session, and next tasks. It's auto-generated and can be added to `.gitignore`.
+Hive Memory writes a `.cortex.md` file in each registered project directory. This file contains a snapshot of the project's current context — summary, recent session, and next tasks. It's auto-generated and should be added to `.gitignore`.
+
+To disable this feature, set `CORTEX_LOCAL_SYNC=false`.
 
 ## Semantic Search
 
-Hive Memory supports embedding-based semantic search with a 3-tier priority system:
+Hive Memory supports embedding-based semantic search with a 3-tier fallback:
 
 | Priority | Backend | How to enable |
 |----------|---------|---------------|
@@ -200,20 +233,12 @@ This requires a Rust toolchain. The native module uses FastEmbed + SQLite vec0 f
 ## Development
 
 ```bash
-# Install dependencies
-npm install
-
-# Build TypeScript
-npm run build
-
-# Dev mode with auto-reload
-npm run dev
-
-# Type check
-npm run typecheck
-
-# Run tests
-npm test
+npm install          # Install dependencies
+npm run build        # Build TypeScript
+npm run dev          # Dev mode with auto-reload
+npm run lint         # Lint with ESLint
+npm run typecheck    # Type check
+npm test             # Run tests
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed contribution guidelines.

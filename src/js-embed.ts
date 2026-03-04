@@ -17,6 +17,7 @@ interface VectorsFile {
 
 export class JsEmbedBackend {
   private vectors = new Map<string, VectorEntry>();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private pipeline: any = null;
   private filePath = "";
   private dirty = false;
