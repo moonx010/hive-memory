@@ -73,7 +73,9 @@ export interface OnboardCandidate {
 
 export interface LocalContextConfig {
   /** Filename written into each project directory */
-  filename: ".cortex.md";
+  filename: string;
+  /** Whether to sync .cortex.md into project directories (default: true) */
+  enabled?: boolean;
 }
 
 export interface CortexConfig {

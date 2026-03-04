@@ -9,11 +9,15 @@ import { registerTools } from "./tools.js";
 
 const DATA_DIR =
   process.env["CORTEX_DATA_DIR"] ?? join(homedir(), ".cortex");
+const SYNC_LOCAL = process.env["CORTEX_LOCAL_SYNC"] !== "false";
 
 async function main() {
   const store = new CortexStore({
     dataDir: DATA_DIR,
-    localContext: { filename: ".cortex.md" },
+    localContext: {
+      filename: process.env["CORTEX_LOCAL_FILENAME"] ?? ".cortex.md",
+      enabled: SYNC_LOCAL,
+    },
   });
   await store.init();
 

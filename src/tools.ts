@@ -99,10 +99,13 @@ export function registerTools(
       // Sync local context
       await store.syncLocalContext(id);
 
+      const localNote = store.localSyncEnabled
+        ? `\n  Local context written to: ${path}/.cortex.md`
+        : `\n  Mode: central-only (local .cortex.md sync disabled)`;
       return {
         content: [{
           type: "text",
-          text: `Project "${name}" (${id}) registered.\n  Path: ${path}\n  Tags: ${tags.join(", ")}${groupIds.length > 0 ? `\n  Groups: ${groupIds.join(", ")}` : ""}\n  Local context written to: ${path}/.cortex.md`,
+          text: `Project "${name}" (${id}) registered.\n  Path: ${path}\n  Tags: ${tags.join(", ")}${groupIds.length > 0 ? `\n  Groups: ${groupIds.join(", ")}` : ""}${localNote}`,
         }],
       };
     },
@@ -349,9 +352,10 @@ export function registerTools(
         learnings: (args.learnings as string[] | undefined) ?? [],
       });
       // saveSession already calls syncLocalContext internally
+      const syncNote = store.localSyncEnabled ? " Local .cortex.md synced." : "";
       return {
         content: [
-          { type: "text", text: `Session saved for ${projectId} (${today}). ${(args.nextTasks as string[] | undefined)?.length ?? 0} next tasks recorded. Local .cortex.md synced.` },
+          { type: "text", text: `Session saved for ${projectId} (${today}). ${(args.nextTasks as string[] | undefined)?.length ?? 0} next tasks recorded.${syncNote}` },
         ],
       };
     },
