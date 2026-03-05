@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, rename, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import type { EmbedSearchResult } from "./embed.js";
@@ -110,6 +110,16 @@ export class JsEmbedBackend {
     }
   }
 
+  async getEmbedding(text: string): Promise<number[] | null> {
+    if (!this.pipeline) return null;
+    try {
+      const output = await this.pipeline(text, { pooling: "mean", normalize: true });
+      return Array.from(output.data as Float32Array);
+    } catch {
+      return null;
+    }
+  }
+
   count(): number {
     return this.vectors.size;
   }
@@ -127,7 +137,9 @@ export class JsEmbedBackend {
       vectors: [...this.vectors.values()],
     };
 
-    await writeFile(this.filePath, JSON.stringify(data), "utf-8");
+    const tmp = `${this.filePath}.${process.pid}.tmp`;
+    await writeFile(tmp, JSON.stringify(data), "utf-8");
+    await rename(tmp, this.filePath);
     this.dirty = false;
   }
 
@@ -147,8 +159,9 @@ export class JsEmbedBackend {
 }
 
 function dotProduct(a: number[], b: number[]): number {
+  const len = Math.min(a.length, b.length);
   let sum = 0;
-  for (let i = 0; i < a.length; i++) {
+  for (let i = 0; i < len; i++) {
     sum += a[i] * b[i];
   }
   return sum;

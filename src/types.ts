@@ -6,7 +6,6 @@ export interface ProjectEntry {
   tags: string[];
   lastActive: string; // ISO 8601
   status: "active" | "paused" | "archived";
-  groupIds?: string[]; // optional, backwards-compatible
 }
 
 export interface ProjectIndex {
@@ -46,20 +45,6 @@ export interface MemoryEntry {
   createdAt: string;
 }
 
-export interface GroupEntry {
-  id: string;           // e.g. "web-team"
-  name: string;         // e.g. "Web Team"
-  description: string;
-  tags: string[];
-  projectIds: string[];
-  createdAt: string;
-  lastActive: string;
-}
-
-export interface GroupIndex {
-  groups: GroupEntry[];
-}
-
 export interface OnboardCandidate {
   path: string;
   suggestedId: string;
@@ -81,4 +66,63 @@ export interface LocalContextConfig {
 export interface CortexConfig {
   dataDir: string;
   localContext: LocalContextConfig;
+}
+
+// ── Hive Cell Types ──
+
+export interface CellEntryBase {
+  id: string;
+  project: string;
+  tags: string[];
+  createdAt: string;
+  embedding: number[];
+}
+
+export interface DirectEntry extends CellEntryBase {
+  type: "direct";
+  category: MemoryCategory;
+  content: string;
+}
+
+export interface ReferenceEntry extends CellEntryBase {
+  type: "reference";
+  path: string;
+  source: string;
+  description: string;
+  lastSynced: string;
+}
+
+export type CellEntry = DirectEntry | ReferenceEntry;
+
+export interface HiveLeafCell {
+  id: string;
+  type: "leaf";
+  summary: string;
+  keywords: string[];
+  centroid: number[];
+  count: number;
+}
+
+export interface HiveBranchCell {
+  id: string;
+  type: "branch";
+  summary: string;
+  keywords: string[];
+  centroid: number[];
+  count: number;
+  children: string[];
+}
+
+export type HiveCell = HiveLeafCell | HiveBranchCell;
+
+export interface HiveIndex {
+  version: 1;
+  cells: Record<string, HiveCell>;
+  nursery: CellEntry[];
+  totalEntries: number;
+}
+
+export interface HiveCellData {
+  cellId: string;
+  entries: CellEntry[];
 }

@@ -48,7 +48,11 @@ export class EmbedService {
 
   async init(dataDir: string): Promise<void> {
     // Priority 1: Native Rust module
-    if (await this.tryNative(dataDir)) return;
+    if (await this.tryNative(dataDir)) {
+      // Also init JS backend for getEmbedding() — native doesn't expose raw vectors
+      await this.tryJs(dataDir);
+      return;
+    }
 
     // Priority 2: JS (transformers.js)
     if (await this.tryJs(dataDir)) return;
@@ -97,10 +101,10 @@ export class EmbedService {
     if (this.nativeIndex) {
       try {
         this.nativeIndex.addText(id, text, metadata);
+        return;
       } catch {
-        // Silently fail — never break the main flow
+        // Native failed — fall through to JS backend
       }
-      return;
     }
     if (this.jsBackend) {
       await this.jsBackend.addText(id, text, metadata);
@@ -121,14 +125,21 @@ export class EmbedService {
     return [];
   }
 
+  async getEmbedding(text: string): Promise<number[] | null> {
+    if (this.jsBackend) {
+      return this.jsBackend.getEmbedding(text);
+    }
+    return null;
+  }
+
   async remove(id: string): Promise<void> {
     if (this.nativeIndex) {
       try {
         this.nativeIndex.remove(id);
+        return;
       } catch {
-        // Silently fail
+        // Native failed — fall through to JS backend
       }
-      return;
     }
     if (this.jsBackend) {
       this.jsBackend.remove(id);
@@ -157,7 +168,6 @@ export class EmbedService {
       } catch {
         // Silently fail
       }
-      return;
     }
     if (this.jsBackend) {
       await this.jsBackend.close();
