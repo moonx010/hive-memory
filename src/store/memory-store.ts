@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -71,7 +72,7 @@ export class MemoryStore {
 
     const now = new Date().toISOString();
     const entry: MemoryEntry = {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       project: projectId,
       category,
       content,

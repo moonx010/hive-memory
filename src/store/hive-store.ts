@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -85,7 +86,7 @@ export class HiveStore {
 
     const entry: DirectEntry = {
       type: "direct",
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       project: projectId,
       category,
       content,
@@ -127,7 +128,7 @@ export class HiveStore {
 
     const entry: ReferenceEntry = {
       type: "reference",
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       project: projectId,
       path,
       source,

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { CellEntry } from "../types.js";
 
 const STOP_WORDS = new Set([
@@ -167,7 +168,7 @@ export function generateCellId(summary: string): string {
     .map((w) => w.replace(/[^a-z0-9\u3131-\uD79D-]/g, ""))
     .filter(Boolean)
     .join("-");
-  const hash = crypto.randomUUID().slice(0, 8);
+  const hash = randomUUID().slice(0, 8);
   return `${slug || "cell"}-${hash}`;
 }
 
