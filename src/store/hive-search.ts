@@ -48,8 +48,6 @@ export class HiveSearch {
     const queryKeywords = extractKeywords(query);
 
     const hive = await this.hiveStore.loadHive();
-    const results: HiveSearchResult[] = [];
-    const candidateEntries: CellEntry[] = [];
     const now = Date.now();
 
     // Collect all candidate entries from nursery + leaf cells

@@ -1,4 +1,4 @@
-import { writeFile, appendFile } from "node:fs/promises";
+import { appendFile } from "node:fs/promises";
 import type { CortexStore } from "./store.js";
 import type { MemoryCategory } from "./types.js";
 import { validateId } from "./store/io.js";
