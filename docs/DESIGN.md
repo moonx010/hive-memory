@@ -1,17 +1,48 @@
-# Cortex Architecture Design
+# Hive Memory Architecture Design (v3)
 
 ## Overview
 
 ```
-User: "How's the Acme API project going?"
+User: "How did we handle JWT in other projects?"
   ↓
-Agent → MCP tool call: project_search("Acme API")
+Agent → MCP tool call: memory_recall("JWT auth")
   ↓
-Cortex MCP Server → searches ~/.cortex/projects/
+Hive Memory MCP Server → beam search through hive cell tree
   ↓
-Returns: project status, last session, next tasks
+Returns:
+  - Direct: "Use JWT tokens for service auth" (proj-a, decision)
+  - Reference: "proj-b's MEMORY.md has JWT expiration notes" (path included)
   ↓
-Agent: loads context and continues the conversation
+Agent: reads reference file if needed, applies context
+```
+
+## Core Concept: Hive Cell
+
+All knowledge lives in a **single global cell tree** organized by semantic similarity. Two entry types coexist:
+
+- **Direct entries**: Content stored via `memory_store` — the actual text lives in hive
+- **Reference entries**: Pointers to external agent memory files — hive stores a description of what's in the file, not the file itself
+
+```
+┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+│ Claude Code │  │   Cursor    │  │   Codex     │
+│ MEMORY.md   │  │ .cursor/    │  │ AGENTS.md   │
+└──────┬──────┘  └──────┬──────┘  └──────┬──────┘
+       │                │                │
+       └────────────────┼────────────────┘
+                        │ reference entries
+                 ┌──────▼──────┐
+                 │  Hive Cell  │ ← direct entries too
+                 │  (global)   │
+                 └──────┬──────┘
+                        │ beam search
+                 "JWT 관련 지식이 어디 있지?"
+                        │
+         ┌──────────────┼──────────────┐
+         ▼              ▼              ▼
+    [direct]       [reference]    [reference]
+    proj-a의       proj-b의        proj-c의
+    JWT 결정       MEMORY.md      CLAUDE.md
 ```
 
 ## Data Model
@@ -21,245 +52,218 @@ Agent: loads context and continues the conversation
 ```
 ~/.cortex/
 ├── index.json                    # Project index (always loaded)
-├── config.json                   # User settings
+├── hive.json                     # Global cell tree index
+├── vectors.json                  # Legacy embedding vectors (JS backend)
+├── cells/                        # Leaf cell data files
+│   ├── auth-jwt-a1b2.json        # Direct + reference entries mixed
+│   └── db-perf-c3d4.json
 ├── global/
 │   ├── patterns.md               # Cross-project patterns
 │   └── preferences.md            # User preferences
 └── projects/
     ├── acme-api/
     │   ├── summary.json          # Project summary (compact)
-    │   ├── status.md             # Current status + next tasks
-    │   ├── decisions.md          # Key decisions log
     │   ├── sessions/
     │   │   ├── 2026-02-25.md     # Per-session work log
     │   │   └── 2026-02-26.md
-    │   └── knowledge/
-    │       ├── architecture.md   # Architecture notes
-    │       └── debugging.md      # Debugging insights
+    │   └── knowledge/            # Legacy (auto-migrated → knowledge.bak/)
     └── dashboard/
         ├── summary.json
-        ├── status.md
         └── ...
 ```
 
-### index.json (Project Index)
+### hive.json (Global Cell Tree Index)
 
 ```json
 {
-  "projects": [
+  "version": 1,
+  "cells": {
+    "auth-jwt-a1b2": {
+      "id": "auth-jwt-a1b2",
+      "type": "leaf",
+      "summary": "JWT authentication tokens...",
+      "keywords": ["jwt", "auth", "tokens"],
+      "centroid": [0.12, -0.34, ...],
+      "count": 8
+    },
+    "root-xy12": {
+      "id": "root-xy12",
+      "type": "branch",
+      "summary": "...",
+      "keywords": [...],
+      "centroid": [...],
+      "count": 25,
+      "children": ["auth-jwt-a1b2", "db-perf-c3d4"]
+    }
+  },
+  "nursery": [],
+  "totalEntries": 42
+}
+```
+
+### Cell Data File (cells/auth-jwt-a1b2.json)
+
+```json
+{
+  "cellId": "auth-jwt-a1b2",
+  "entries": [
     {
-      "id": "acme-api",
-      "name": "Acme API",
-      "path": "/home/user/projects/acme-api",
-      "description": "REST API backend for Acme platform (Go)",
-      "tags": ["go", "api", "rest", "backend"],
-      "lastActive": "2026-02-25T14:30:00Z",
-      "status": "active"
+      "type": "direct",
+      "id": "uuid-1",
+      "project": "proj-a",
+      "category": "decision",
+      "content": "Use JWT tokens for service-to-service auth",
+      "tags": ["auth", "jwt"],
+      "createdAt": "2026-03-05T10:30:00Z",
+      "embedding": [0.12, -0.34, ...]
+    },
+    {
+      "type": "reference",
+      "id": "uuid-2",
+      "project": "proj-b",
+      "path": "/Users/user/proj-b/.claude/memory/MEMORY.md",
+      "source": "claude-memory",
+      "description": "JWT token expiration handling and refresh strategy",
+      "tags": ["auth", "jwt"],
+      "createdAt": "2026-03-05T11:00:00Z",
+      "lastSynced": "2026-03-05T11:00:00Z",
+      "embedding": [0.11, -0.33, ...]
     }
   ]
 }
 ```
 
-### summary.json (Project Summary — token-minimal)
+### Recognized External Memory Sources
 
-```json
-{
-  "id": "acme-api",
-  "oneLiner": "REST API backend for Acme platform built with Go",
-  "techStack": ["Go", "Chi", "PostgreSQL"],
-  "modules": ["auth", "handlers", "middleware", "models", "migrations"],
-  "currentFocus": "Implementing rate limiting middleware",
-  "lastSession": {
-    "date": "2026-02-25",
-    "summary": "Added JWT auth middleware, wrote integration tests",
-    "nextTasks": ["Add rate limiting", "Improve error responses"]
-  },
-  "stats": {
-    "tests": 84,
-    "lastBuild": "pass"
-  }
-}
-```
+| Source | File pattern | Description |
+|--------|-------------|-------------|
+| `claude-memory` | `~/.claude/projects/*/memory/MEMORY.md` | Claude Code auto-memory |
+| `claude-project` | `{project}/CLAUDE.md` | Project-level Claude instructions |
+| `codex-agents` | `{project}/AGENTS.md` | Codex agent instructions |
+| `cursor-rules` | `{project}/.cursor/rules/*` | Cursor rule files |
+| `custom` | User-specified | Manually registered documents |
 
-## MCP Tools
-
-### 1. project_search
-Search projects with natural language.
-
-```typescript
-{
-  name: "project_search",
-  description: "Search for a project by name, description, or tags",
-  inputSchema: {
-    query: string,      // "Acme API", "go backend", "that REST project"
-    limit?: number      // default 3
-  }
-}
-// Returns: matching projects with summaries
-```
-
-### 2. project_status
-Return current status of a specific project.
-
-```typescript
-{
-  name: "project_status",
-  description: "Get current status and context of a project",
-  inputSchema: {
-    project: string,    // project id
-    detail?: "brief" | "full"  // default "brief"
-  }
-}
-// brief: summary.json only
-// full: summary + status.md + recent session log
-```
-
-### 3. memory_store
-Store knowledge for a project.
-
-```typescript
-{
-  name: "memory_store",
-  description: "Store knowledge, decision, or learning for a project",
-  inputSchema: {
-    project: string,
-    category: "decision" | "learning" | "status" | "note",
-    content: string,
-    tags?: string[]
-  }
-}
-```
-
-### 4. memory_recall
-Search and recall relevant memories.
-
-```typescript
-{
-  name: "memory_recall",
-  description: "Recall relevant memories across projects",
-  inputSchema: {
-    query: string,
-    project?: string,   // limit to specific project (optional)
-    limit?: number
-  }
-}
-```
-
-### 5. session_save
-Save session progress at the end of a work session.
-
-```typescript
-{
-  name: "session_save",
-  description: "Save session progress — what was done and what's next",
-  inputSchema: {
-    project: string,
-    summary: string,        // what was done this session
-    nextTasks?: string[],   // what to do next
-    decisions?: string[],   // decisions made
-    learnings?: string[]    // things learned
-  }
-}
-```
-
-## Phase 1 Implementation (MVP)
-
-### Scope
-- JSON/Markdown file-based storage
-- Keyword matching search (exact name, tag, description)
-- 5 core MCP tools
-- Claude Code hooks for auto session save (stretch goal)
-
-### Tech Stack
-- TypeScript + Node.js (ESM)
-- @modelcontextprotocol/sdk
-- Storage: JSON/MD files under ~/.cortex/
-- Search: simple string matching (includes, fuzzy matching)
-
-### Non-scope
-- Vector embeddings / semantic search (Phase 3)
-- SQLite (Phase 2)
-- Web UI
-- Multi-user
-
-## Group System (Hierarchical Organization)
-
-### Overview
-
-Projects can belong to **groups** — logical collections that share guides, knowledge, and context.
-A project can belong to multiple groups (many-to-many). Groups are optional; ungrouped projects work as before.
-
-### Directory Structure
-
-```
-~/.cortex/
-├── index.json          # ProjectEntry[] (with optional groupIds)
-├── groups.json         # GroupEntry[]
-├── groups/
-│   ├── web-team/
-│   │   ├── overview.md
-│   │   ├── guides/     # Shared guides (coding-standards.md, etc.)
-│   │   └── knowledge/  # Group-level decisions/learnings
-│   └── ml-team/
-│       ├── overview.md
-│       └── guides/
-└── projects/           # Unchanged
-```
-
-### Data Model
-
-```typescript
-interface GroupEntry {
-  id: string;           // "web-team"
-  name: string;         // "Web Team"
-  description: string;
-  tags: string[];
-  projectIds: string[];
-  createdAt: string;
-  lastActive: string;
-}
-
-// ProjectEntry gets: groupIds?: string[]
-```
-
-### MCP Tools
+## MCP Tools (7)
 
 | Tool | Description |
 |------|-------------|
-| `group_create` | Create a group with optional initial projects |
-| `group_list` | List all groups with member count |
-| `group_update` | Update metadata + addProjects/removeProjects |
-| `group_context` | brief: overview + guide list / full: + guide contents + knowledge |
-| `group_guide_save` | Save shared guide documents |
+| `project_register` | Register or update a project (upsert) |
+| `project_search` | Search projects, or list all with empty query |
+| `project_status` | Get context (full mode includes cross-project insights) |
+| `project_onboard` | Auto-discover projects + scan for agent memory files |
+| `memory_store` | Store decision/learning/note (→ direct entry) |
+| `memory_recall` | Cross-project search (→ direct + reference results) |
+| `session_save` | Save session progress |
 
-Modified existing tools: `project_register` (groupIds param), `project_status` (Groups section),
-`project_list` (group display), `project_search` (group-name boosting), `memory_recall` (group param).
+## Search Algorithm
 
-### Progressive Disclosure
+### Beam Search (O(log N))
 
 ```
-project_status("dashboard")
-  → Level 1 (~50 tokens): group name + guide list hints
-
-group_context("web-team", detail="full")
-  → Level 2: full guide contents + member project status
+search(query, options?)
+  1. Embed query → 384-dim vector
+  2. Extract query keywords
+  3. Search nursery (brute force, small buffer)
+  4. Beam search through cell tree:
+     - Score = 0.7 × cosineSim(query, centroid) + 0.3 × keywordOverlap
+     - Beam width = 3
+     - At each level, keep top 3 candidates
+     - Follow branches, collect leaves
+  5. Load matching leaf cell files
+  6. Score individual entries (vector + keyword + tag match)
+  7. Filter by project/category if specified
+  8. Return sorted results:
+     - Direct → { project, category, snippet, score }
+     - Reference → { project, source, path, snippet, score }
 ```
 
-This two-level approach saves tokens by loading shared guides only when the agent determines they're needed.
+### Write Path
 
-## Future Phases
+```
+storeDirectEntry(project, category, content, tags)
+  1. Embed content → 384-dim vector
+  2. Create DirectEntry { type: "direct", content, embedding, ... }
+  3. Push to nursery
+  4. If nursery >= 10 → flushNursery():
+     - Assign each entry to best-matching leaf (cosine similarity)
+     - If no cells exist → create first leaf
+     - If leaf > 20 entries → splitCell() via k-means(k=2)
+```
 
-### Phase 2: SQLite + Full-Text Search
-- JSON/MD → SQLite migration
-- FTS5 for full-text search
-- More complex query support
+## Cross-Project Discovery
 
-### Phase 3: Semantic Search
-- sqlite-vec or local embedding model
-- Hybrid search (BM25 + vector)
-- Support for vague queries like "that async debugging thing"
+Cross-project insights are powered by beam search — no manual grouping required.
 
-### Phase 4: Auto-Capture
-- Claude Code hooks for auto session start/end detection
-- Auto session summarization (LLM call)
-- Auto project status updates
+```
+project_status("dashboard", detail="full")
+  → dashboard's currentFocus = "authentication"
+  → memory_recall("authentication") across all projects
+  → filter: exclude self, keep decision/learning + references
+  → return top 3 relevant insights from other projects
+```
+
+This means registering two projects with related work automatically surfaces cross-project connections — including references to other agents' memory files.
+
+## Auto Session Capture
+
+Claude Code's `SessionEnd` hook triggers `hive-memory hook session-end`:
+
+```
+Claude Code session ends
+  → SessionEnd hook fires
+  → hive-memory hook session-end --transcript <path> --cwd <path>
+  → parse JSONL transcript
+  → match project by working directory
+  → skip if session_save already called
+  → skip if last save < 5 minutes ago
+  → auto-save session summary
+```
+
+## Module Structure
+
+```
+src/
+  index.ts              ← Entry point (MCP server + CLI routing)
+  store.ts              ← Facade (initializes hive, auto-migrates)
+  store/
+    io.ts               ← readJson, writeJson, atomicWriteFile, validateId
+    project-store.ts    ← Project CRUD, search, index
+    memory-store.ts     ← Delegates to hive, dual-writes legacy markdown
+    session-store.ts    ← saveSession, formatSessionMarkdown
+    context-sync.ts     ← syncLocalContext, getCrossProjectContext
+    onboard.ts          ← scanForProjects, detectProject
+    hive-index.ts       ← Pure functions: centroid, cosine, keywords, kMeans2
+    hive-store.ts       ← HiveStore: nursery, cells, flush, split
+    hive-search.ts      ← HiveSearch: beam search through cell tree
+    hive-migrate.ts     ← Legacy migration + reference scanning
+  tools.ts              ← Re-export from tools/
+  tools/
+    index.ts            ← registerTools orchestrator
+    project-tools.ts    ← project_register, search, status, onboard
+    memory-tools.ts     ← memory_store, memory_recall
+    session-tools.ts    ← session_save
+  hooks/
+    session-end.ts      ← Auto session capture handler
+    transcript-parser.ts ← Claude Code JSONL parser
+  embed.ts              ← Embedding service (native/JS/none)
+  js-embed.ts           ← JS embedding backend
+  types.ts              ← Type definitions (including Hive types)
+```
+
+## Migration
+
+### Legacy → Hive (automatic)
+
+On first startup, if `hive.json` has no entries:
+1. Scan all projects' `knowledge/` directories
+2. Parse markdown sections → direct entries
+3. Embed and store in hive
+4. Rename `knowledge/` → `knowledge.bak/`
+
+### Reference Scanning (on onboard)
+
+When `project_onboard(path, register=true)` is called:
+1. Detect and register projects
+2. For each project, scan for agent memory files
+3. Extract description (heading summary or first 500 chars)
+4. Store as reference entries in hive

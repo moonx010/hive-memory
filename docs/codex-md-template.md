@@ -1,14 +1,13 @@
-## Cortex — Cross-Project Memory
+## Hive Memory — Cross-Project Memory
 
-Cortex MCP server (`cortex`) is available via MCP. Use it to maintain continuity across sessions and projects.
+Hive Memory MCP server is available via MCP. Use it to maintain continuity across sessions and discover knowledge across all projects.
 
 ### Session Start
 
 When you detect which project is being worked on:
 
-1. Call the `project_status` tool with the project ID to load context
-2. If the project is NOT registered, use `project_onboard` with the directory path to discover and register it
-3. If the project belongs to a group, let the user know — they may want shared guides via `group_context`
+1. Call `project_status` with the project ID and `detail="full"` to load context (includes cross-project insights via semantic search)
+2. If the project is NOT registered, use `project_onboard` with the directory path and `register=true` to discover and register it. This also scans for existing agent memory files (MEMORY.md, AGENTS.md, .cursor/rules)
 
 ### During Work
 
@@ -20,6 +19,15 @@ Store important information as it comes up using the `memory_store` tool:
 
 Don't store trivial things — focus on what would help future sessions.
 
+### Searching Knowledge
+
+Use `memory_recall` with a query to search across all projects. Results include two types:
+
+- **Direct entries**: Actual content stored via `memory_store` — shown with `[project/category]`
+- **Reference entries**: Pointers to external files (MEMORY.md, CLAUDE.md, AGENTS.md, etc.) — shown with `[project/source] (reference)` and include a file path
+
+When you see a reference result with a file path, read that file to get full content.
+
 ### Session End
 
 When the user says they're done or wrapping up:
@@ -28,30 +36,16 @@ When the user says they're done or wrapping up:
 
 ### Available Tools
 
-**Project management:**
-- `project_register` — Register a new project
-- `project_list` — List all registered projects
-- `project_update` — Update project metadata or status
-- `project_search` — Search projects by name or tags
-- `project_status` — Get current context and last session info
-- `project_onboard` — Auto-discover projects in a directory
-
-**Memory:**
+- `project_register` — Register or update a project (upsert)
+- `project_search` — Search projects by name/tags, or list all (empty query)
+- `project_status` — Get project context with cross-project insights
+- `project_onboard` — Auto-discover projects in a directory and scan for agent memory files
 - `memory_store` — Store a decision, learning, or note
-- `memory_recall` — Search and recall relevant memories
-
-**Sessions:**
+- `memory_recall` — Search memories across all projects (returns direct entries + reference pointers)
 - `session_save` — Save session progress
-
-**Groups:**
-- `group_create` — Create a group of related projects
-- `group_list` — List all groups
-- `group_update` — Add/remove projects from a group
-- `group_context` — Get shared guides and group info
-- `group_guide_save` — Save a shared guide for the group
 
 ### Don't Overdo It
 
-- Don't call Cortex tools for quick questions unrelated to any project
+- Don't call tools for quick questions unrelated to any project
 - Don't store every small detail — store decisions, architecture insights, debugging breakthroughs
 - One `session_save` at the end is usually enough
