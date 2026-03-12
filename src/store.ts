@@ -22,7 +22,7 @@ import { OnboardScanner } from "./store/onboard.js";
 import { HiveStore } from "./store/hive-store.js";
 import { HiveSearch } from "./store/hive-search.js";
 import type { HiveSearchResult } from "./store/hive-search.js";
-import { migrateAllProjects, scanProjectReferences } from "./store/hive-migrate.js";
+import { migrateAllProjects, scanProjectReferences, syncReferences } from "./store/hive-migrate.js";
 
 // Re-export for backwards compatibility
 export { validateId } from "./store/io.js";
@@ -69,19 +69,7 @@ export class CortexStore {
   }
 
   async init(): Promise<void> {
-    const dirs = [
-      this.dataDir,
-      join(this.dataDir, "projects"),
-      join(this.dataDir, "global"),
-    ];
-    for (const dir of dirs) {
-      await mkdir(dir, { recursive: true });
-    }
-    const indexPath = join(this.dataDir, "index.json");
-    if (!existsSync(indexPath)) {
-      await writeJson(indexPath, { projects: [] });
-    }
-
+    await this.initDirs();
     await this.embed.init(this.dataDir);
     await this.hive.ensureDirs();
 
@@ -93,6 +81,27 @@ export class CortexStore {
 
     if (this.embed.available && this.embed.count() === 0) {
       await this.reindexAll();
+    }
+  }
+
+  /** Init without loading embedding model — for fast CLI commands (keyword-only search). */
+  async initWithoutEmbed(): Promise<void> {
+    await this.initDirs();
+    await this.hive.ensureDirs();
+  }
+
+  private async initDirs(): Promise<void> {
+    const dirs = [
+      this.dataDir,
+      join(this.dataDir, "projects"),
+      join(this.dataDir, "global"),
+    ];
+    for (const dir of dirs) {
+      await mkdir(dir, { recursive: true });
+    }
+    const indexPath = join(this.dataDir, "index.json");
+    if (!existsSync(indexPath)) {
+      await writeJson(indexPath, { projects: [] });
     }
   }
 
@@ -108,11 +117,11 @@ export class CortexStore {
 
   // --- Delegated memory methods ---
 
-  async storeMemory(projectId: string, category: MemoryCategory, content: string, tags: string[]): Promise<MemoryEntry> {
-    return this.memories.storeMemory(projectId, category, content, tags);
+  async storeMemory(projectId: string, category: MemoryCategory, content: string, tags: string[], agentId?: string): Promise<MemoryEntry> {
+    return this.memories.storeMemory(projectId, category, content, tags, agentId);
   }
-  async recallMemories(query: string, projectId?: string, limit?: number): Promise<HiveSearchResult[]> {
-    return this.memories.recallMemories(query, projectId, limit);
+  async recallMemories(query: string, projectId?: string, limit?: number, agentId?: string): Promise<HiveSearchResult[]> {
+    return this.memories.recallMemories(query, projectId, limit, agentId);
   }
 
   // --- Delegated session methods ---
@@ -141,6 +150,26 @@ export class CortexStore {
 
   async scanProjectReferences(projectId: string, projectPath: string): Promise<number> {
     return scanProjectReferences(projectId, projectPath, this.hive);
+  }
+
+  async syncReferences(projectId: string): Promise<number> {
+    return syncReferences(projectId, this.hive);
+  }
+
+  // --- Cleanup ---
+
+  /**
+   * Remove expired status entries (older than 30 days).
+   * Returns the count of removed entries.
+   */
+  async cleanupExpiredEntries(): Promise<number> {
+    const STATUS_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    return this.hive.removeEntries((entry) =>
+      entry.type === "direct" &&
+      entry.category === "status" &&
+      now - new Date(entry.createdAt).getTime() > STATUS_TTL_MS,
+    );
   }
 
   // --- Reindex ---

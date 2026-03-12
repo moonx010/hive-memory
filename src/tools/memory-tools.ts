@@ -13,6 +13,7 @@ export function registerMemoryTools(safeTool: SafeToolFn, store: CortexStore) {
       category: z.enum(["decision", "learning", "status", "note"]).describe("Type of memory to store"),
       content: z.string().describe("The content to store"),
       tags: z.array(z.string()).optional().describe("Optional tags for categorization"),
+      agent: z.string().optional().describe("Agent identity (e.g. 'claude', 'codex') — tracks which agent stored this memory"),
     },
     async (args) => {
       validateId(args.project as string);
@@ -21,9 +22,10 @@ export function registerMemoryTools(safeTool: SafeToolFn, store: CortexStore) {
         args.category as MemoryCategory,
         args.content as string,
         (args.tags as string[] | undefined) ?? [],
+        args.agent as string | undefined,
       );
       return {
-        content: [{ type: "text" as const, text: `Stored ${args.category} for ${args.project} (id: ${entry.id})` }],
+        content: [{ type: "text" as const, text: `Stored ${args.category} for ${args.project} (id: ${entry.id})${args.agent ? ` [agent: ${args.agent}]` : ""}` }],
       };
     },
   );
@@ -35,14 +37,16 @@ export function registerMemoryTools(safeTool: SafeToolFn, store: CortexStore) {
       query: z.string().describe("What to search for"),
       project: z.string().optional().describe("Limit search to a specific project (optional)"),
       limit: z.number().optional().describe("Max results (default 5)"),
+      agent: z.string().optional().describe("Filter results by agent identity (e.g. 'claude', 'codex')"),
     },
     async (args) => {
       const query = args.query as string;
       const limit = (args.limit as number | undefined) ?? 5;
       const projectId = args.project as string | undefined;
+      const agentId = args.agent as string | undefined;
       if (projectId) validateId(projectId);
 
-      const results = await store.recallMemories(query, projectId, limit);
+      const results = await store.recallMemories(query, projectId, limit, agentId);
 
       if (results.length === 0) {
         return { content: [{ type: "text" as const, text: "No matching memories found." }] };
@@ -54,7 +58,8 @@ export function registerMemoryTools(safeTool: SafeToolFn, store: CortexStore) {
             return `**[${r.project}/${r.source}]** (reference)\n${r.snippet}${r.path ? `\nPath: ${r.path}` : ""}`;
           }
           // Direct entry
-          return `**[${r.project}/${r.category ?? "unknown"}]**\n${r.snippet}`;
+          const agentTag = r.agent ? ` (agent: ${r.agent})` : "";
+          return `**[${r.project}/${r.category ?? "unknown"}]**${agentTag}\n${r.snippet}`;
         })
         .join("\n\n---\n\n");
       return { content: [{ type: "text" as const, text }] };

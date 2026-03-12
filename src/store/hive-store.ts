@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { acquireLock, releaseLock } from "./lock.js";
 import type {
   HiveIndex,
   HiveCellData,
@@ -77,6 +78,7 @@ export class HiveStore {
     category: MemoryCategory,
     content: string,
     tags: string[],
+    agentId?: string,
   ): Promise<MemoryEntry> {
     const now = new Date().toISOString();
     const embedding = (await this.embed.getEmbedding(content)) ?? [];
@@ -90,6 +92,7 @@ export class HiveStore {
       tags,
       createdAt: now,
       embedding,
+      ...(agentId ? { agentId } : {}),
     };
 
     const hive = await this.loadHive();
@@ -150,6 +153,15 @@ export class HiveStore {
   async flushNursery(hive: HiveIndex): Promise<void> {
     if (hive.nursery.length === 0) return;
 
+    await acquireLock(this.dataDir);
+    try {
+      await this.doFlush(hive);
+    } finally {
+      await releaseLock(this.dataDir);
+    }
+  }
+
+  private async doFlush(hive: HiveIndex): Promise<void> {
     await this.ensureDirs();
 
     const leafIds = Object.keys(hive.cells).filter(
@@ -312,6 +324,40 @@ export class HiveStore {
     }
 
     return entries;
+  }
+
+  /**
+   * Remove entries matching a predicate from nursery and all leaf cells.
+   * Returns the count of removed entries.
+   */
+  async removeEntries(predicate: (entry: CellEntry) => boolean): Promise<number> {
+    const hive = await this.loadHive();
+
+    // Remove from nursery
+    const origNurseryLen = hive.nursery.length;
+    hive.nursery = hive.nursery.filter((e) => !predicate(e));
+    let totalRemoved = origNurseryLen - hive.nursery.length;
+
+    // Remove from leaf cells
+    const leafIds = Object.keys(hive.cells).filter(
+      (id) => hive.cells[id].type === "leaf",
+    );
+
+    for (const leafId of leafIds) {
+      const cellData = await this.loadCellData(leafId);
+      const origLen = cellData.entries.length;
+      cellData.entries = cellData.entries.filter((e) => !predicate(e));
+      const removed = origLen - cellData.entries.length;
+      if (removed > 0) {
+        totalRemoved += removed;
+        hive.cells[leafId].count = cellData.entries.length;
+        await this.saveCellData(cellData);
+      }
+    }
+
+    hive.totalEntries -= totalRemoved;
+    await this.saveHive(hive);
+    return totalRemoved;
   }
 
   /**

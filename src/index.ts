@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { CortexStore } from "./store.js";
 import { registerTools } from "./tools.js";
+import { handleCli } from "./cli.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
@@ -39,6 +40,10 @@ async function handleHook(args: string[]): Promise<void> {
   }
 }
 
+// --- CLI commands ---
+
+const CLI_COMMANDS = new Set(["store", "recall", "status", "inject", "sync", "cleanup"]);
+
 // --- Main ---
 
 async function main() {
@@ -47,6 +52,20 @@ async function main() {
   // CLI mode: hive-memory hook <subcommand> [args...]
   if (args[0] === "hook") {
     await handleHook(args.slice(1));
+    return;
+  }
+
+  // CLI mode: hive-memory <command> [args...]
+  if (args[0] && CLI_COMMANDS.has(args[0])) {
+    const store = createStore();
+    const initStore = async (skipEmbed?: boolean) => {
+      if (skipEmbed) {
+        await store.initWithoutEmbed();
+      } else {
+        await store.init();
+      }
+    };
+    await handleCli(store, initStore, args);
     return;
   }
 

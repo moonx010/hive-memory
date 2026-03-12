@@ -82,6 +82,7 @@ export interface DirectEntry extends CellEntryBase {
   type: "direct";
   category: MemoryCategory;
   content: string;
+  agentId?: string;
 }
 
 export interface ReferenceEntry extends CellEntryBase {

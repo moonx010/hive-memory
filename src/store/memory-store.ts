@@ -26,6 +26,7 @@ export class MemoryStore {
     category: MemoryCategory,
     content: string,
     tags: string[],
+    agentId?: string,
   ): Promise<MemoryEntry> {
     // Verify project is registered
     const index = await this.projectStore.getIndex();
@@ -35,7 +36,7 @@ export class MemoryStore {
 
     // Store in hive (primary)
     if (this.hiveStore) {
-      return this.hiveStore.storeDirectEntry(projectId, category, content, tags);
+      return this.hiveStore.storeDirectEntry(projectId, category, content, tags, agentId);
     }
 
     // Fallback: legacy-only path (no hive available)
@@ -46,10 +47,11 @@ export class MemoryStore {
     query: string,
     projectId?: string,
     limit = 5,
+    agentId?: string,
   ): Promise<HiveSearchResult[]> {
     // Use hive search if available
     if (this.hiveSearch) {
-      return this.hiveSearch.search(query, { project: projectId, limit });
+      return this.hiveSearch.search(query, { project: projectId, agent: agentId, limit });
     }
 
     // Fallback: legacy search
