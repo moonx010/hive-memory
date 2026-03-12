@@ -19,3 +19,7 @@ native/node_modules/
 
 # Smithery build artifacts
 .smithery/
+
+# AI tool configs (openspec-generated)
+.claude/
+.codex/
