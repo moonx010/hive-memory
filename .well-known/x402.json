@@ -1,0 +1,12 @@
+{
+  "name": "moonx010/hive-memory",
+  "description": "Cross-project memory for AI coding agents. MCP server that maintains context, decisions, and knowledge across workspaces. Fully local.",
+  "accepts": [
+    {
+      "network": "eip155:8453",
+      "asset": "USDC",
+      "address": "YOUR_WALLET_ADDRESS"
+    }
+  ],
+  "resources": []
+}
