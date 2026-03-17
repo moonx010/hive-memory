@@ -75,7 +75,8 @@ export interface CellEntryBase {
   project: string;
   tags: string[];
   createdAt: string;
-  embedding: number[];
+  /** @deprecated Vector embeddings removed — kept for migration compatibility */
+  embedding?: number[];
 }
 
 export interface DirectEntry extends CellEntryBase {
@@ -100,8 +101,9 @@ export interface HiveLeafCell {
   type: "leaf";
   summary: string;
   keywords: string[];
-  centroid: number[];
   count: number;
+  /** @deprecated Removed — clustering is keyword-based now */
+  centroid?: number[];
 }
 
 export interface HiveBranchCell {
@@ -109,9 +111,10 @@ export interface HiveBranchCell {
   type: "branch";
   summary: string;
   keywords: string[];
-  centroid: number[];
   count: number;
   children: string[];
+  /** @deprecated Removed — clustering is keyword-based now */
+  centroid?: number[];
 }
 
 export type HiveCell = HiveLeafCell | HiveBranchCell;
@@ -126,4 +129,66 @@ export interface HiveIndex {
 export interface HiveCellData {
   cellId: string;
   entries: CellEntry[];
+}
+
+// ── Synapse Types (Brain-Inspired Graph) ──
+
+/**
+ * Axon type — the kind of connection between two engrams (entries).
+ * Named after neural axon pathways that carry specific signal types.
+ */
+export type AxonType =
+  | "temporal"      // A occurred before B (time sequence)
+  | "causal"        // A caused/led to B
+  | "semantic"      // A and B are topically related
+  | "refinement"    // B refines/updates A
+  | "conflict"      // A and B contradict each other
+  | "dependency"    // B depends on A
+  | "derived";      // B was derived from A
+
+/**
+ * Synapse — a weighted, directed edge between two engrams (entries).
+ * Models the biological synapse: source → target with signal strength.
+ */
+export interface Synapse {
+  id: string;
+  /** Pre-synaptic entry (source) */
+  source: string;
+  /** Post-synaptic entry (target) */
+  target: string;
+  /** Type of neural pathway */
+  axon: AxonType;
+  /** Synaptic strength: 0.0 (pruned) to 1.0 (strongly potentiated) */
+  weight: number;
+  /** Optional context about this connection */
+  metadata?: Record<string, string>;
+  /** When this synapse was first formed */
+  formedAt: string;
+  /** Last time this synapse was potentiated (LTP) */
+  lastPotentiated: string;
+}
+
+/**
+ * SynapseIndex — the connectome. Stores all synapses with adjacency indexes.
+ */
+export interface SynapseIndex {
+  version: 1;
+  synapses: Synapse[];
+  /** Adjacency list for O(1) neighbor lookup */
+  adjacency: {
+    /** entryId → synapseIds where entry is source */
+    outgoing: Record<string, string[]>;
+    /** entryId → synapseIds where entry is target */
+    incoming: Record<string, string[]>;
+  };
+}
+
+/**
+ * Co-activation tracking for Hebbian learning.
+ * "Neurons that fire together, wire together."
+ */
+export interface CoactivationIndex {
+  version: 1;
+  /** "entryA:entryB" → co-activation count (sorted key pair) */
+  counts: Record<string, number>;
 }

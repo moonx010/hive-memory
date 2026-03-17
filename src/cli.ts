@@ -12,7 +12,6 @@ interface CliArgs {
   limit?: number;
   output?: string;
   json?: boolean;
-  noEmbed?: boolean;
   content?: string;
 }
 
@@ -45,7 +44,7 @@ export function parseCliArgs(args: string[]): CliArgs {
         result.json = true;
         break;
       case "--no-embed":
-        result.noEmbed = true;
+        // Legacy flag — ignored (embeddings removed)
         break;
       default:
         // Positional argument = content (for store command)
@@ -62,7 +61,7 @@ export function parseCliArgs(args: string[]): CliArgs {
 
 export async function handleCli(
   store: CortexStore,
-  initStore: (skipEmbed?: boolean) => Promise<void>,
+  initStore: () => Promise<void>,
   args: string[],
 ): Promise<void> {
   const parsed = parseCliArgs(args);
@@ -94,7 +93,7 @@ export async function handleCli(
 
 async function handleStore(
   store: CortexStore,
-  initStore: (skipEmbed?: boolean) => Promise<void>,
+  initStore: () => Promise<void>,
   args: CliArgs,
 ): Promise<void> {
   if (!args.project || !args.category || !args.content) {
@@ -109,7 +108,7 @@ async function handleStore(
     process.exit(1);
   }
 
-  await initStore(args.noEmbed);
+  await initStore();
   const entry = await store.storeMemory(
     args.project,
     args.category as MemoryCategory,
@@ -122,7 +121,7 @@ async function handleStore(
 
 async function handleRecall(
   store: CortexStore,
-  initStore: (skipEmbed?: boolean) => Promise<void>,
+  initStore: () => Promise<void>,
   args: CliArgs,
 ): Promise<void> {
   if (!args.query) {
@@ -130,7 +129,7 @@ async function handleRecall(
     process.exit(1);
   }
 
-  await initStore(args.noEmbed);
+  await initStore();
   const results = await store.recallMemories(args.query, args.project, args.limit ?? 5, args.agent);
 
   if (results.length === 0) {
@@ -157,7 +156,7 @@ async function handleRecall(
 
 async function handleStatus(
   store: CortexStore,
-  initStore: (skipEmbed?: boolean) => Promise<void>,
+  initStore: () => Promise<void>,
   args: CliArgs,
 ): Promise<void> {
   if (!args.project) {
@@ -166,7 +165,7 @@ async function handleStatus(
   }
 
   validateId(args.project);
-  await initStore(true); // Status doesn't need embeddings
+  await initStore();
   const summary = await store.getProjectSummary(args.project);
 
   if (!summary) {
@@ -194,7 +193,7 @@ async function handleStatus(
 
 async function handleInject(
   store: CortexStore,
-  initStore: (skipEmbed?: boolean) => Promise<void>,
+  initStore: () => Promise<void>,
   args: CliArgs,
 ): Promise<void> {
   if (!args.project || !args.query || !args.output) {
@@ -203,7 +202,7 @@ async function handleInject(
   }
 
   validateId(args.project);
-  await initStore(args.noEmbed);
+  await initStore();
 
   const results = await store.recallMemories(args.query, args.project, args.limit ?? 3);
 
@@ -225,16 +224,14 @@ async function handleInject(
 
 async function handleSync(
   store: CortexStore,
-  initStore: (skipEmbed?: boolean) => Promise<void>,
+  initStore: () => Promise<void>,
   args: CliArgs,
 ): Promise<void> {
-  await initStore(args.noEmbed);
+  await initStore();
 
   if (args.project) {
     validateId(args.project);
-    // First sync existing refs (detect changes/deletions)
     const syncCount = await store.syncReferences(args.project);
-    // Then scan for new files
     const index = await store.getIndex();
     const proj = index.projects.find(p => p.id === args.project);
     let scanCount = 0;
@@ -243,7 +240,6 @@ async function handleSync(
     }
     console.log(`Synced ${args.project}: ${syncCount} updated, ${scanCount} scanned.`);
   } else {
-    // Sync all projects
     const index = await store.getIndex();
     let totalSync = 0;
     let totalScan = 0;
@@ -262,10 +258,10 @@ async function handleSync(
 
 async function handleCleanup(
   store: CortexStore,
-  initStore: (skipEmbed?: boolean) => Promise<void>,
+  initStore: () => Promise<void>,
   _args: CliArgs,
 ): Promise<void> {
-  await initStore(true); // Cleanup doesn't need embeddings
+  await initStore();
   const removed = await store.cleanupExpiredEntries();
   console.log(`Removed ${removed} expired status entries.`);
 }
@@ -275,7 +271,7 @@ function printUsage(): void {
 
 Commands:
   store     Store a memory entry
-  recall    Search and recall memories
+  recall    Search and recall memories (keyword + graph traversal)
   status    Show project status
   inject    Recall memories and append to file
   sync      Sync external agent memory files
@@ -291,7 +287,6 @@ Options:
   --limit <n>         Max results (default: 5)
   --output <file>     Output file path (for inject)
   --json              Output as JSON
-  --no-embed          Skip embedding model (faster, keyword-only search)
 
 Without a command, starts as MCP server (stdio transport).`);
 }

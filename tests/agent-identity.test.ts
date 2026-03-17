@@ -1,55 +1,28 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HiveStore } from "../src/store/hive-store.js";
 import { HiveSearch } from "../src/store/hive-search.js";
+import { SynapseStore } from "../src/store/synapse-store.js";
 import type { DirectEntry } from "../src/types.js";
-
-vi.mock("../src/embed.js", () => ({
-  EmbedService: class {
-    available = false;
-    async init() {}
-    async addText() {}
-    async search() { return []; }
-    async remove() {}
-    async getEmbedding() { return null; }
-    count() { return 0; }
-    async close() {}
-  },
-}));
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function createMockEmbed(): any {
-  return {
-    available: false,
-    async init() {},
-    async addText() {},
-    async search() { return []; },
-    async remove() {},
-    async getEmbedding() { return null; },
-    count() { return 0; },
-    async close() {},
-  };
-}
 
 describe("Agent Identity", () => {
   let dataDir: string;
   let store: HiveStore;
   let search: HiveSearch;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let mockEmbed: any;
+  let synapseStore: SynapseStore;
 
   beforeEach(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "agent-identity-test-"));
-    mockEmbed = createMockEmbed();
-    store = new HiveStore(dataDir, mockEmbed);
-    search = new HiveSearch(store, mockEmbed);
+    store = new HiveStore(dataDir);
+    synapseStore = new SynapseStore(dataDir);
+    search = new HiveSearch(store, synapseStore);
     await store.ensureDirs();
   });
 
   afterEach(async () => {
-    await rm(dataDir, { recursive: true, force: true });
+    try { await rm(dataDir, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
   describe("storeDirectEntry with agentId", () => {

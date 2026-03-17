@@ -1,37 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HiveStore } from "../src/store/hive-store.js";
 import { migrateProject, scanProjectReferences, syncReferences } from "../src/store/hive-migrate.js";
-
-vi.mock("../src/embed.js", () => ({
-  EmbedService: class {
-    available = false;
-    async init() {}
-    async addText() {}
-    async search() { return []; }
-    async remove() {}
-    async getEmbedding() { return null; }
-    count() { return 0; }
-    async close() {}
-  },
-}));
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function createMockEmbed(): any {
-  return {
-    available: false,
-    async init() {},
-    async addText() {},
-    async search() { return []; },
-    async remove() {},
-    async getEmbedding() { return null; },
-    count() { return 0; },
-    async close() {},
-  };
-}
 
 describe("hive-migrate", () => {
   let dataDir: string;
@@ -41,12 +14,12 @@ describe("hive-migrate", () => {
   beforeEach(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "hive-migrate-test-"));
     projectDir = await mkdtemp(join(tmpdir(), "hive-migrate-proj-"));
-    hiveStore = new HiveStore(dataDir, createMockEmbed());
+    hiveStore = new HiveStore(dataDir);
     await hiveStore.ensureDirs();
   });
 
   afterEach(async () => {
-    await rm(dataDir, { recursive: true, force: true });
+    try { await rm(dataDir, { recursive: true, force: true }); } catch { /* ignore */ }
     await rm(projectDir, { recursive: true, force: true });
   });
 

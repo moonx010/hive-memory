@@ -2,14 +2,10 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ProjectIndex, ProjectEntry, ProjectSummary } from "../types.js";
-import type { EmbedService } from "../embed.js";
 import { readJson, writeJson } from "./io.js";
 
 export class ProjectStore {
-  constructor(
-    private dataDir: string,
-    private embed: EmbedService,
-  ) {}
+  constructor(private dataDir: string) {}
 
   private get indexPath(): string {
     return join(this.dataDir, "index.json");
@@ -42,18 +38,6 @@ export class ProjectStore {
         .slice(0, limit);
     }
 
-    // Build vector score map for semantic boosting
-    const vectorScores = new Map<string, number>();
-    const vecHits = await this.embed.search(query, limit * 2);
-    for (const hit of vecHits) {
-      try {
-        const meta = hit.metadata ? JSON.parse(hit.metadata) : null;
-        if (meta?.type === "project") {
-          vectorScores.set(meta.project, Math.max(0, 15 * (1 - hit.distance)));
-        }
-      } catch { /* ignore parse errors */ }
-    }
-
     const scored = index.projects.map((p) => {
       let score = 0;
       if (p.name.toLowerCase().includes(q)) score += 10;
@@ -66,7 +50,6 @@ export class ProjectStore {
         (Date.now() - new Date(p.lastActive).getTime()) / 86400000;
       if (daysSince < 1) score += 3;
       else if (daysSince < 7) score += 1;
-      score += vectorScores.get(p.id) ?? 0;
       return { project: p, score };
     });
     return scored
@@ -85,12 +68,6 @@ export class ProjectStore {
       index.projects.push(entry);
     }
     await this.saveIndex(index);
-
-    await this.embed.addText(
-      `project:${entry.id}`,
-      `${entry.name} ${entry.description} ${entry.tags.join(" ")}`,
-      JSON.stringify({ type: "project", project: entry.id }),
-    );
   }
 
   async getProjectSummary(projectId: string): Promise<ProjectSummary | null> {
