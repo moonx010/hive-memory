@@ -104,7 +104,7 @@ export class HiveSearch {
       .map((p) => p.entry.id);
 
     // 6. Spreading activation — find graph-connected entries
-    let graphResults: HiveSearchResult[] = [];
+    const graphResults: HiveSearchResult[] = [];
     if (keywordSeedIds.length > 0) {
       const activated = await spreadingActivation(keywordSeedIds, this.synapseStore, {
         maxDepth: 2,
