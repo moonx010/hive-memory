@@ -15,7 +15,7 @@
  ╚═╝     ╚═╝╚══════╝╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═╝   ╚═╝
 ```
 
-**Cross-project memory layer for AI coding agents**
+**Cross-project memory layer for AI coding agents — with graph memory**
 
 [![npm](https://img.shields.io/npm/v/hive-memory)](https://www.npmjs.com/package/hive-memory)
 [![license](https://img.shields.io/npm/l/hive-memory)](LICENSE)
@@ -25,18 +25,26 @@
 
 ---
 
-Hive Memory is an [MCP](https://modelcontextprotocol.io) server that gives AI coding agents persistent memory across projects. It stores decisions, learnings, session progress, and project context in a local knowledge base — so your agent can pick up where it left off, even across different workspaces.
+Hive Memory is an [MCP](https://modelcontextprotocol.io) server that gives AI coding agents persistent, **graph-connected** memory across projects. It stores decisions, learnings, and session progress in a local knowledge base with brain-inspired synaptic connections — so your agent can discover related context through topology-based traversal, not just keyword search.
+
+## What's New in v2
+
+- **Graph Memory (Synapses)**: Brain-inspired connections between memories — temporal, causal, semantic, refinement, conflict, dependency, derived
+- **Spreading Activation**: Discover related memories through synaptic pathways that keyword search alone wouldn't find
+- **Hebbian Learning**: Connections strengthen (LTP) or weaken (LTD) over time based on co-activation
+- **No embeddings required**: Replaced vector-based search with keyword + topology-based graph traversal. Zero external dependencies, instant startup
+- **3 new tools**: `memory_link`, `memory_traverse`, `memory_connections`
 
 ## Why Hive Memory?
 
 AI coding agents have memory, but it's scoped to a single project:
 
-| | Scope | Cross-project | Semantic search | Coexists with agent memory |
+| | Scope | Cross-project | Graph search | Coexists with agent memory |
 |---|---|---|---|---|
 | **Claude Code** (MEMORY.md) | Single project | No | No | — |
 | **Codex** (AGENTS.md) | Single project | No | No | — |
 | **Cursor** (.cursor/rules/) | Single project | No | No | — |
-| **Hive Memory** | All projects | Yes (automatic) | Yes (O(log N)) | Yes (references) |
+| **Hive Memory** | All projects | Yes (automatic) | Yes (synapses) | Yes (references) |
 
 Hive Memory sits **above** these tools as a meta-layer. It doesn't replace them — it connects them.
 
@@ -54,7 +62,7 @@ Hive Memory sits **above** these tools as a meta-layer. It doesn't replace them 
                  │  Hive Cell  │ ← direct entries too
                  │  (global)   │
                  └──────┬──────┘
-                        │ beam search
+                        │ keyword + graph search
                  "JWT 관련 지식이 어디 있지?"
                         │
          ┌──────────────┼──────────────┐
@@ -67,8 +75,6 @@ Hive Memory sits **above** these tools as a meta-layer. It doesn't replace them 
 
 - **Direct entries**: Knowledge your agent stores via `memory_store` — decisions, learnings, notes
 - **Reference entries**: Pointers to existing agent memory files (MEMORY.md, AGENTS.md, .cursor/rules/) — Hive knows *what's in them* without copying content
-
-When you search with `memory_recall`, you get both: actual content from direct entries, and "this file has relevant info" pointers from reference entries. Your agent can then read the referenced files directly.
 
 ## Quick Start
 
@@ -154,39 +160,95 @@ See the [full setup guide](docs/setup.md) for step-by-step instructions.
                │  MCP Server │
                └──────┬──────┘
                       │
-               ┌──────▼──────┐
-               │  ~/.cortex/ │
-               │  Hive Cell  │
-               │  (O(log N)  │
-               │   search)   │
-               └─────────────┘
+     ┌────────────────┼────────────────┐
+     ▼                ▼                ▼
+┌─────────┐    ┌───────────┐    ┌───────────┐
+│ Hive    │    │ Synapse   │    │ Spreading │
+│ Cell    │    │ Graph     │    │ Activation│
+│ Tree    │    │ (LTP/LTD) │    │           │
+└─────────┘    └───────────┘    └───────────┘
 ```
 
-**No cloud. No accounts. Everything stays on your machine.**
+**No cloud. No accounts. No embeddings. Everything stays on your machine.**
 
 ### Hive Cell Architecture
 
-All knowledge lives in a single **global cell tree** — a hierarchical index that organizes entries by semantic similarity:
+All knowledge lives in a single **global cell tree** — a hierarchical index that organizes entries by keyword similarity:
 
 ```
 ~/.cortex/
-  index.json        ← Project registry (unchanged)
-  hive.json         ← Global tree index (cells + nursery)
-  cells/            ← Leaf cell data files
+  index.json            ← Project registry
+  hive.json             ← Global tree index (cells + nursery)
+  synapses.json         ← Connectome (synapse graph)
+  coactivation.json     ← Hebbian co-activation counts
+  cells/                ← Leaf cell data files
     auth-jwt-a1b2.json
     db-perf-c3d4.json
   projects/
     proj-a/
-      summary.json  ← Project summary
-      sessions/     ← Session logs
-      knowledge/    ← Legacy (auto-migrated to hive)
+      summary.json      ← Project summary
+      sessions/         ← Session logs
 ```
 
-New entries go into a **nursery** buffer. When the nursery reaches 10 entries, they're flushed into the best-matching leaf cell. Cells that grow beyond 20 entries are split via k-means clustering into two children.
+New entries go into a **nursery** buffer. When the nursery reaches 10 entries, they're flushed into the best-matching leaf cell. Cells that grow beyond 20 entries are split via keyword clustering into two children.
 
-Search uses **beam search** (width=3) through the tree: score = 0.7 × vector similarity + 0.3 × keyword overlap. This gives O(log N) search instead of brute-force scanning.
+### Graph Memory (Synapses)
 
-## Tools Reference (7 tools)
+Every memory can be connected to other memories through **synapses** — directed, weighted edges inspired by neuroscience:
+
+```
+"Use JWT for auth" ──[causal:0.8]──→ "Add token refresh logic"
+        │                                      │
+        │──[semantic:0.5]──→ "OAuth2 decision"  │
+                                               │
+"Rate limit API" ←──[dependency:0.6]───────────┘
+```
+
+**7 Axon Types:**
+
+| Type | Meaning | Example |
+|------|---------|---------|
+| `temporal` | A occurred before B | Decision A was made before Decision B |
+| `causal` | A caused/led to B | "Use PostgreSQL" → "Add pgvector extension" |
+| `semantic` | Topically related | Both about authentication |
+| `refinement` | B refines/updates A | "Use JWT" → "Use JWT with 15min expiry" |
+| `conflict` | A contradicts B | "Use SQL" vs "Use NoSQL" |
+| `dependency` | B depends on A | Feature B requires Feature A |
+| `derived` | B was derived from A | Learning extracted from a decision |
+
+**Synapses are created automatically** when you store memories (temporal + semantic), and can be created explicitly with `memory_link`.
+
+### Spreading Activation
+
+When you search with `memory_recall` or `memory_traverse`, the system doesn't just match keywords — it propagates signal through the synapse graph:
+
+```
+Query: "auth token handling"
+  │
+  ▼ keyword match
+  Seed: "Use JWT for auth" (activation: 1.0)
+  │
+  ├─[causal:0.8]──→ "Add token refresh" (activation: 0.4)
+  │                        │
+  │                  ├─[dependency:0.6]──→ "Rate limit API" (activation: 0.12)
+  │
+  └─[semantic:0.5]──→ "OAuth2 decision" (activation: 0.25)
+```
+
+Signal decays with each hop (default: 0.5× per hop). This surfaces **contextually related** memories that keyword search alone would miss.
+
+### Hebbian Learning
+
+"Neurons that fire together, wire together":
+
+- **LTP (Long-Term Potentiation)**: When two memories are recalled together repeatedly, their synapse weight increases (+0.1 per co-activation)
+- **LTD (Long-Term Depression)**: Unused synapses decay over time (×0.995 per flush cycle)
+- **Pruning**: Synapses below 0.05 weight are automatically removed
+- **Auto-formation**: When two memories are co-activated 5+ times, a Hebbian synapse is created automatically
+
+## Tools Reference (10 tools)
+
+### Project Tools
 
 | Tool | Description |
 |------|-------------|
@@ -194,8 +256,21 @@ Search uses **beam search** (width=3) through the tree: score = 0.7 × vector si
 | `project_search` | Search projects by name/tags, or list all (empty query) |
 | `project_status` | Get project context (full mode includes cross-project insights) |
 | `project_onboard` | Auto-discover projects in a directory + scan for agent memory files |
-| `memory_store` | Store a decision, learning, or note (→ direct entry in hive) |
-| `memory_recall` | Search memories across all projects (returns direct + reference results) |
+
+### Memory Tools
+
+| Tool | Description |
+|------|-------------|
+| `memory_store` | Store a decision, learning, or note. Auto-creates synapses to related memories |
+| `memory_recall` | Search using keyword matching + graph traversal (spreading activation) |
+| `memory_link` | Form an explicit synapse between two memory entries |
+| `memory_traverse` | Deep graph traversal — find memories connected through synaptic pathways |
+| `memory_connections` | View the synaptic connections of a specific memory entry |
+
+### Session Tools
+
+| Tool | Description |
+|------|-------------|
 | `session_save` | Save session progress — what was done, what's next |
 
 ### memory_recall result format
@@ -206,12 +281,33 @@ memory_recall("JWT auth")
   → Direct:    **[proj-a/decision]**
                "Use JWT tokens for service-to-service auth"
 
+  → Direct:    **[proj-a/learning]** 🔗depth:1
+               "Token refresh needs retry logic"
+
   → Reference: **[proj-b/claude-memory]** (reference)
                "JWT token expiration handling notes"
                Path: /Users/.../MEMORY.md
 ```
 
-Your agent sees reference results and can read the file directly with its `Read` tool.
+Results include `🔗depth:N` markers showing how many synaptic hops away the memory was found.
+
+### memory_traverse example
+
+```
+memory_traverse("database architecture", depth=3)
+
+  → **[proj-a/decision]** [depth:0]
+    "Use PostgreSQL for main database"
+
+  → **[proj-a/decision]** [depth:1]
+    "Add pgvector extension for embeddings"
+
+  → **[proj-b/learning]** [depth:2]
+    "Connection pooling critical for serverless"
+
+  → **[proj-c/decision]** [depth:3]
+    "Use Supabase (PostgreSQL) for BaaS"
+```
 
 ### project_onboard with reference scanning
 
@@ -278,47 +374,14 @@ Hive Memory writes a `.cortex.md` file in each registered project directory. Thi
 
 To disable this feature, set `CORTEX_LOCAL_SYNC=false`.
 
-## Semantic Search
+## Migration from v1
 
-Hive Memory includes embedding-based semantic search — **fully local, no API calls, no external servers**. The `@huggingface/transformers` package is included as a dependency and works out of the box.
-
-### How It Works
-
-```
-"refactored auth module"
-         │
-         ▼
-┌─────────────────────┐
-│  Embedding Model    │   Runs inside your Node.js process
-│  (ONNX Runtime)     │   Model auto-downloaded on first use (~23MB)
-└────────┬────────────┘
-         │
-         ▼
-  [0.12, -0.34, ...]     384-dimensional vector
-         │
-         ▼
-┌─────────────────────┐
-│  Hive Cell Tree     │   Entries organized by semantic similarity
-│  O(log N) beam      │   No brute-force scanning
-│  search             │
-└─────────────────────┘
-```
-
-### Backends
-
-| Priority | Backend | Storage | How to enable |
-|----------|---------|---------|---------------|
-| 1 (best) | **Native** (Rust + FastEmbed) | SQLite | `cd native && npm install && npm run build` |
-| 2 | **JS** (transformers.js) | Hive Cell tree | Included by default |
-| 3 | **Keyword-only** | — | Fallback if model fails to load |
-
-## Migration from v2
-
-Hive Memory v3 automatically migrates existing data:
+Hive Memory v2 automatically migrates existing data:
 
 - **Legacy `knowledge/` files** are migrated to hive direct entries on first startup, then renamed to `knowledge.bak/`
 - **Existing project registrations** (`index.json`, `summary.json`, sessions) are unchanged
-- The legacy `vectors.json` file continues to work for the old embed index
+- **Embedding data** (`vectors.json`, embedding model cache) is no longer used and can be safely deleted
+- The `@huggingface/transformers` dependency has been removed — no more model downloads
 
 No manual action needed — just update and restart.
 
@@ -330,7 +393,7 @@ npm run build        # Build TypeScript
 npm run dev          # Dev mode with auto-reload
 npm run lint         # Lint with ESLint
 npm run typecheck    # Type check
-npm test             # Run tests (95 tests)
+npm test             # Run tests (125 tests)
 ```
 
 ## License

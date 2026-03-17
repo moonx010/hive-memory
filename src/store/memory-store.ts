@@ -3,19 +3,19 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { MemoryEntry, MemoryCategory } from "../types.js";
-import type { EmbedService } from "../embed.js";
 import type { ProjectStore } from "./project-store.js";
 import type { HiveStore } from "./hive-store.js";
 import type { HiveSearch, HiveSearchResult } from "./hive-search.js";
+import type { SynapseStore } from "./synapse-store.js";
 import { capitalize } from "./io.js";
 
 export class MemoryStore {
   constructor(
     private dataDir: string,
-    private embed: EmbedService,
     private projectStore: ProjectStore,
     private hiveStore: HiveStore | null = null,
     private hiveSearch: HiveSearch | null = null,
+    private synapseStore: SynapseStore | null = null,
   ) {}
 
   private projectDir(projectId: string): string {
@@ -37,7 +37,23 @@ export class MemoryStore {
 
     // Store in hive (primary)
     if (this.hiveStore) {
-      return this.hiveStore.storeDirectEntry(projectId, category, content, tags, agentId);
+      const entry = await this.hiveStore.storeDirectEntry(projectId, category, content, tags, agentId);
+
+      // Auto-create synapses (consolidation)
+      if (this.synapseStore) {
+        const nurseryEntries = await this.hiveStore.getNurseryEntries();
+        const allEntries = await this.hiveStore.getAllEntries();
+        // Find the entry we just stored
+        const storedEntry = [...nurseryEntries, ...allEntries].find((e) => e.id === entry.id);
+        if (storedEntry) {
+          // Fire-and-forget synapse creation to not slow down the store operation
+          this.synapseStore
+            .onEntryStored(storedEntry, nurseryEntries, allEntries.slice(-50))
+            .catch(() => {});
+        }
+      }
+
+      return entry;
     }
 
     // Fallback: legacy-only path (no hive available)
@@ -57,6 +73,23 @@ export class MemoryStore {
 
     // Fallback: legacy search
     return this.legacyRecall(query, projectId, limit);
+  }
+
+  /**
+   * Graph-based traversal search (for memory_traverse tool).
+   */
+  async traverseMemories(
+    query: string,
+    projectId?: string,
+    limit = 10,
+    depth = 3,
+    decay = 0.5,
+  ): Promise<HiveSearchResult[]> {
+    if (this.hiveSearch) {
+      return this.hiveSearch.traverse(query, { project: projectId, limit, depth, decay });
+    }
+    // Fallback to regular recall
+    return this.recallMemories(query, projectId, limit);
   }
 
   // ── Legacy helpers (fallback when hive unavailable) ──
@@ -92,12 +125,6 @@ export class MemoryStore {
       const header = `# ${capitalize(category)}s — ${projectId}\n`;
       await writeFile(path, header + line, "utf-8");
     }
-
-    await this.embed.addText(
-      `memory:${projectId}:${category}:${entry.createdAt}`,
-      content,
-      JSON.stringify({ type: "memory", project: projectId, category, preview: content.slice(0, 300) }),
-    );
 
     return entry;
   }
@@ -138,32 +165,6 @@ export class MemoryStore {
           }
         }
       }
-    }
-
-    const vecHits = await this.embed.search(query, limit * 2);
-    for (const hit of vecHits) {
-      try {
-        const meta = hit.metadata ? JSON.parse(hit.metadata) : null;
-        if (meta?.type !== "memory") continue;
-        if (projectId && meta.project !== projectId) continue;
-
-        const vecScore = Math.max(0, 15 * (1 - hit.distance));
-        const vecDate = hit.id.split(":")[3]?.slice(0, 10) ?? "";
-        const existing = results.find(
-          (r) => r.project === meta.project && r.category === meta.category &&
-            vecDate && r.snippet.includes(vecDate),
-        );
-        if (existing) {
-          existing.score += vecScore;
-        } else {
-          results.push({
-            project: meta.project,
-            category: meta.category,
-            snippet: meta.preview ?? hit.id,
-            score: vecScore,
-          });
-        }
-      } catch { /* ignore */ }
     }
 
     return results

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,19 +7,7 @@ import type { CortexConfig } from "../../src/types.js";
 import { parseTranscript } from "../../src/hooks/transcript-parser.js";
 import { handleSessionEnd } from "../../src/hooks/session-end.js";
 
-// Mock EmbedService
-vi.mock("../../src/embed.js", () => ({
-  EmbedService: class {
-    available = false;
-    async init() {}
-    async addText() {}
-    async search() { return []; }
-    async remove() {}
-    async getEmbedding() { return null; }
-    count() { return 0; }
-    async close() {}
-  },
-}));
+// No need to mock EmbedService — embeddings have been removed
 
 async function createTestStore() {
   const dataDir = await mkdtemp(join(tmpdir(), "cortex-hook-"));
@@ -108,7 +96,7 @@ describe("handleSessionEnd", () => {
   }, 60_000);
 
   afterEach(async () => {
-    await rm(dataDir, { recursive: true, force: true });
+    try { await rm(dataDir, { recursive: true, force: true }); } catch { /* ignore */ }
     await rm(projectDir, { recursive: true, force: true });
   });
 

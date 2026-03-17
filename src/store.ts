@@ -10,8 +10,9 @@ import type {
   MemoryCategory,
   CortexConfig,
   OnboardCandidate,
+  AxonType,
+  Synapse,
 } from "./types.js";
-import { EmbedService } from "./embed.js";
 import { writeJson } from "./store/io.js";
 import { ProjectStore } from "./store/project-store.js";
 import { MemoryStore } from "./store/memory-store.js";
@@ -22,6 +23,7 @@ import { OnboardScanner } from "./store/onboard.js";
 import { HiveStore } from "./store/hive-store.js";
 import { HiveSearch } from "./store/hive-search.js";
 import type { HiveSearchResult } from "./store/hive-search.js";
+import { SynapseStore } from "./store/synapse-store.js";
 import { migrateAllProjects, scanProjectReferences, syncReferences } from "./store/hive-migrate.js";
 
 // Re-export for backwards compatibility
@@ -34,7 +36,6 @@ export { validateId } from "./store/io.js";
 export class CortexStore {
   private dataDir: string;
   private localContextEnabled: boolean;
-  private embed = new EmbedService();
 
   private projects!: ProjectStore;
   private memories!: MemoryStore;
@@ -43,16 +44,18 @@ export class CortexStore {
   private onboard!: OnboardScanner;
   private hive!: HiveStore;
   private hiveSearch!: HiveSearch;
+  private synapses!: SynapseStore;
 
   constructor(config: CortexConfig) {
     this.dataDir = config.dataDir;
     this.localContextEnabled = config.localContext.enabled ?? true;
 
-    // Wire up sub-stores
-    this.projects = new ProjectStore(this.dataDir, this.embed);
-    this.hive = new HiveStore(this.dataDir, this.embed);
-    this.hiveSearch = new HiveSearch(this.hive, this.embed);
-    this.memories = new MemoryStore(this.dataDir, this.embed, this.projects, this.hive, this.hiveSearch);
+    // Wire up sub-stores (no embedding dependency)
+    this.projects = new ProjectStore(this.dataDir);
+    this.hive = new HiveStore(this.dataDir);
+    this.synapses = new SynapseStore(this.dataDir);
+    this.hiveSearch = new HiveSearch(this.hive, this.synapses);
+    this.memories = new MemoryStore(this.dataDir, this.projects, this.hive, this.hiveSearch, this.synapses);
     this.sessions = new SessionStore(this.dataDir, this.projects);
     this.context = new ContextSync(
       this.dataDir,
@@ -70,7 +73,6 @@ export class CortexStore {
 
   async init(): Promise<void> {
     await this.initDirs();
-    await this.embed.init(this.dataDir);
     await this.hive.ensureDirs();
 
     // Auto-migrate legacy knowledge/ → hive on first run
@@ -78,16 +80,6 @@ export class CortexStore {
     if (hiveIndex.totalEntries === 0) {
       await migrateAllProjects(this.dataDir, this.projects, this.hive);
     }
-
-    if (this.embed.available && this.embed.count() === 0) {
-      await this.reindexAll();
-    }
-  }
-
-  /** Init without loading embedding model — for fast CLI commands (keyword-only search). */
-  async initWithoutEmbed(): Promise<void> {
-    await this.initDirs();
-    await this.hive.ensureDirs();
   }
 
   private async initDirs(): Promise<void> {
@@ -122,6 +114,24 @@ export class CortexStore {
   }
   async recallMemories(query: string, projectId?: string, limit?: number, agentId?: string): Promise<HiveSearchResult[]> {
     return this.memories.recallMemories(query, projectId, limit, agentId);
+  }
+  async traverseMemories(query: string, projectId?: string, limit?: number, depth?: number, decay?: number): Promise<HiveSearchResult[]> {
+    return this.memories.traverseMemories(query, projectId, limit, depth, decay);
+  }
+
+  // --- Synapse methods ---
+
+  async formSynapse(source: string, target: string, axon: AxonType, weight?: number, metadata?: Record<string, string>): Promise<Synapse> {
+    return this.synapses.formSynapse(source, target, axon, weight, metadata);
+  }
+  async getConnections(entryId: string, direction?: "outgoing" | "incoming" | "both", axonType?: AxonType) {
+    return this.synapses.getConnections(entryId, direction, axonType);
+  }
+  async getSynapseStats() {
+    return this.synapses.getStats();
+  }
+  async applyDecay(): Promise<number> {
+    return this.synapses.applyDecay();
   }
 
   // --- Delegated session methods ---
@@ -158,10 +168,6 @@ export class CortexStore {
 
   // --- Cleanup ---
 
-  /**
-   * Remove expired status entries (older than 30 days).
-   * Returns the count of removed entries.
-   */
   async cleanupExpiredEntries(): Promise<number> {
     const STATUS_TTL_MS = 30 * 24 * 60 * 60 * 1000;
     const now = Date.now();
@@ -170,46 +176,5 @@ export class CortexStore {
       entry.category === "status" &&
       now - new Date(entry.createdAt).getTime() > STATUS_TTL_MS,
     );
-  }
-
-  // --- Reindex ---
-
-  private async reindexAll(): Promise<void> {
-    if (!this.embed.available) return;
-
-    const index = await this.projects.getIndex();
-    for (const p of index.projects) {
-      await this.embed.addText(
-        `project:${p.id}`,
-        `${p.name} ${p.description} ${p.tags.join(" ")}`,
-        JSON.stringify({ type: "project", project: p.id }),
-      );
-    }
-
-    const { readFile } = await import("node:fs/promises");
-    for (const proj of index.projects) {
-      const knowledgeDir = join(this.dataDir, "projects", proj.id, "knowledge");
-      if (!existsSync(knowledgeDir)) continue;
-
-      const categories: MemoryCategory[] = ["decision", "learning", "status", "note"];
-      for (const cat of categories) {
-        const path = join(knowledgeDir, `${cat}s.md`);
-        if (!existsSync(path)) continue;
-
-        const content = await readFile(path, "utf-8");
-        const sections = content.split(/^## /m).filter(Boolean);
-        for (let i = 0; i < sections.length; i++) {
-          const section = sections[i].trim();
-          if (!section) continue;
-          const dateMatch = section.match(/^(\d{4}-\d{2}-\d{2})/);
-          const ts = dateMatch ? dateMatch[1] : `s${i}`;
-          await this.embed.addText(
-            `memory:${proj.id}:${cat}:${ts}`,
-            section,
-            JSON.stringify({ type: "memory", project: proj.id, category: cat, preview: section.slice(0, 300) }),
-          );
-        }
-      }
-    }
   }
 }

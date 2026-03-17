@@ -58,12 +58,8 @@ async function main() {
   // CLI mode: hive-memory <command> [args...]
   if (args[0] && CLI_COMMANDS.has(args[0])) {
     const store = createStore();
-    const initStore = async (skipEmbed?: boolean) => {
-      if (skipEmbed) {
-        await store.initWithoutEmbed();
-      } else {
-        await store.init();
-      }
+    const initStore = async () => {
+      await store.init();
     };
     await handleCli(store, initStore, args);
     return;

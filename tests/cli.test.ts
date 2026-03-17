@@ -50,7 +50,7 @@ describe("parseCliArgs", () => {
     expect(args.project).toBe("myapp");
     expect(args.query).toBe("task context");
     expect(args.output).toBe("PROMPT.md");
-    expect(args.noEmbed).toBe(true);
+    // --no-embed is now a legacy flag, ignored silently
   });
 
   it("parses store without agent", () => {

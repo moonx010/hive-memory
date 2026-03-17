@@ -1,60 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HiveStore } from "../src/store/hive-store.js";
 import { HiveSearch } from "../src/store/hive-search.js";
-
-vi.mock("../src/embed.js", () => ({
-  EmbedService: class {
-    available = false;
-    async init() {}
-    async addText() {}
-    async search() { return []; }
-    async remove() {}
-    async getEmbedding() { return null; }
-    count() { return 0; }
-    async close() {}
-  },
-}));
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function createMockEmbed(): any {
-  return {
-    available: false,
-    async init() {},
-    async addText() {},
-    async search() { return []; },
-    async remove() {},
-    async getEmbedding() { return null; },
-    count() { return 0; },
-    async close() {},
-  };
-}
-
-/** Helper: create a mock embed that returns controlled embeddings */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function createEmbedWithVectors(vectors: Map<string, number[]>): any {
-  let callIdx = 0;
-  const orderedVectors = [...vectors.values()];
-  return {
-    available: true,
-    async init() {},
-    async addText() {},
-    async search() { return []; },
-    async remove() {},
-    async getEmbedding(text: string) {
-      // Try exact match first
-      for (const [key, vec] of vectors) {
-        if (text.includes(key)) return vec;
-      }
-      // Fallback: return by call order
-      return orderedVectors[callIdx++ % orderedVectors.length] ?? null;
-    },
-    count() { return 0; },
-    async close() {},
-  };
-}
+import { SynapseStore } from "../src/store/synapse-store.js";
 
 const THIRTY_ONE_DAYS_MS = 31 * 24 * 60 * 60 * 1000;
 
@@ -62,19 +12,18 @@ describe("Memory Lifecycle — TTL", () => {
   let dataDir: string;
   let store: HiveStore;
   let search: HiveSearch;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let mockEmbed: any;
+  let synapseStore: SynapseStore;
 
   beforeEach(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "lifecycle-test-"));
-    mockEmbed = createMockEmbed();
-    store = new HiveStore(dataDir, mockEmbed);
-    search = new HiveSearch(store, mockEmbed);
+    store = new HiveStore(dataDir);
+    synapseStore = new SynapseStore(dataDir);
+    search = new HiveSearch(store, synapseStore);
     await store.ensureDirs();
   });
 
   afterEach(async () => {
-    await rm(dataDir, { recursive: true, force: true });
+    try { await rm(dataDir, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
   it("excludes expired status entries from search", async () => {
@@ -136,18 +85,15 @@ describe("Memory Lifecycle — TTL", () => {
 describe("Memory Lifecycle — Cleanup", () => {
   let dataDir: string;
   let store: HiveStore;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let mockEmbed: any;
 
   beforeEach(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "cleanup-test-"));
-    mockEmbed = createMockEmbed();
-    store = new HiveStore(dataDir, mockEmbed);
+    store = new HiveStore(dataDir);
     await store.ensureDirs();
   });
 
   afterEach(async () => {
-    await rm(dataDir, { recursive: true, force: true });
+    try { await rm(dataDir, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
   it("removes expired status entries via removeEntries", async () => {
@@ -231,29 +177,21 @@ describe("Memory Lifecycle — Conflict Detection", () => {
   let dataDir: string;
   let store: HiveStore;
   let search: HiveSearch;
+  let synapseStore: SynapseStore;
 
   afterEach(async () => {
-    await rm(dataDir, { recursive: true, force: true });
+    try { await rm(dataDir, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
-  it("detects conflict between decision entries from different agents with high similarity", async () => {
-    // Create embeddings that are very similar (cosine sim > 0.85)
-    const vecA = [1, 0, 0, 0]; // normalized
-    const vecB = [0.95, 0.05, 0.05, 0.05]; // very similar to vecA
-
-    const vectors = new Map<string, number[]>();
-    vectors.set("Use PostgreSQL", vecA);
-    vectors.set("Use MySQL", vecB);
-    vectors.set("database", vecA); // query embedding
-
-    const mockEmbed = createEmbedWithVectors(vectors);
+  it("detects conflict between decision entries from different agents with high keyword overlap", async () => {
     dataDir = await mkdtemp(join(tmpdir(), "conflict-test-"));
-    store = new HiveStore(dataDir, mockEmbed);
-    search = new HiveSearch(store, mockEmbed);
+    store = new HiveStore(dataDir);
+    synapseStore = new SynapseStore(dataDir);
+    search = new HiveSearch(store, synapseStore);
     await store.ensureDirs();
 
-    await store.storeDirectEntry("proj", "decision", "Use PostgreSQL for main database", ["db"], "claude");
-    await store.storeDirectEntry("proj", "decision", "Use MySQL for main database", ["db"], "codex");
+    await store.storeDirectEntry("proj", "decision", "Use PostgreSQL for main database storage backend", ["db", "database"], "claude");
+    await store.storeDirectEntry("proj", "decision", "Use MySQL for main database storage backend", ["db", "database"], "codex");
 
     const results = await search.search("database choice");
 
@@ -264,15 +202,10 @@ describe("Memory Lifecycle — Conflict Detection", () => {
   });
 
   it("does not flag conflict when agents are the same", async () => {
-    const vec = [1, 0, 0, 0];
-    const vectors = new Map<string, number[]>();
-    vectors.set("PostgreSQL", vec);
-    vectors.set("database", vec);
-
-    const mockEmbed = createEmbedWithVectors(vectors);
     dataDir = await mkdtemp(join(tmpdir(), "conflict-same-agent-"));
-    store = new HiveStore(dataDir, mockEmbed);
-    search = new HiveSearch(store, mockEmbed);
+    store = new HiveStore(dataDir);
+    synapseStore = new SynapseStore(dataDir);
+    search = new HiveSearch(store, synapseStore);
     await store.ensureDirs();
 
     await store.storeDirectEntry("proj", "decision", "Use PostgreSQL v1", ["db"], "claude");
@@ -284,15 +217,10 @@ describe("Memory Lifecycle — Conflict Detection", () => {
   });
 
   it("does not flag conflict for non-decision categories", async () => {
-    const vec = [1, 0, 0, 0];
-    const vectors = new Map<string, number[]>();
-    vectors.set("React", vec);
-    vectors.set("hooks", vec);
-
-    const mockEmbed = createEmbedWithVectors(vectors);
     dataDir = await mkdtemp(join(tmpdir(), "conflict-non-decision-"));
-    store = new HiveStore(dataDir, mockEmbed);
-    search = new HiveSearch(store, mockEmbed);
+    store = new HiveStore(dataDir);
+    synapseStore = new SynapseStore(dataDir);
+    search = new HiveSearch(store, synapseStore);
     await store.ensureDirs();
 
     await store.storeDirectEntry("proj", "learning", "React hooks are great", ["react"], "claude");
@@ -304,15 +232,10 @@ describe("Memory Lifecycle — Conflict Detection", () => {
   });
 
   it("does not flag conflict for different projects", async () => {
-    const vec = [1, 0, 0, 0];
-    const vectors = new Map<string, number[]>();
-    vectors.set("PostgreSQL", vec);
-    vectors.set("database", vec);
-
-    const mockEmbed = createEmbedWithVectors(vectors);
     dataDir = await mkdtemp(join(tmpdir(), "conflict-diff-project-"));
-    store = new HiveStore(dataDir, mockEmbed);
-    search = new HiveSearch(store, mockEmbed);
+    store = new HiveStore(dataDir);
+    synapseStore = new SynapseStore(dataDir);
+    search = new HiveSearch(store, synapseStore);
     await store.ensureDirs();
 
     await store.storeDirectEntry("proj-a", "decision", "Use PostgreSQL here", ["db"], "claude");
@@ -324,15 +247,10 @@ describe("Memory Lifecycle — Conflict Detection", () => {
   });
 
   it("does not flag conflict when entries lack agentId", async () => {
-    const vec = [1, 0, 0, 0];
-    const vectors = new Map<string, number[]>();
-    vectors.set("PostgreSQL", vec);
-    vectors.set("database", vec);
-
-    const mockEmbed = createEmbedWithVectors(vectors);
     dataDir = await mkdtemp(join(tmpdir(), "conflict-no-agent-"));
-    store = new HiveStore(dataDir, mockEmbed);
-    search = new HiveSearch(store, mockEmbed);
+    store = new HiveStore(dataDir);
+    synapseStore = new SynapseStore(dataDir);
+    search = new HiveSearch(store, synapseStore);
     await store.ensureDirs();
 
     // No agentId provided

@@ -13,7 +13,7 @@ describe("Lock", () => {
   });
 
   afterEach(async () => {
-    await rm(dataDir, { recursive: true, force: true });
+    try { await rm(dataDir, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
   describe("acquireLock / releaseLock", () => {

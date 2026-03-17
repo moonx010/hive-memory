@@ -12,15 +12,13 @@ import type {
   MemoryCategory,
   MemoryEntry,
 } from "../types.js";
-import type { EmbedService } from "../embed.js";
 import { readJson, writeJson } from "./io.js";
 import {
-  computeCentroid,
-  cosineSim,
   extractKeywords,
+  keywordOverlap,
+  keywordSplit2,
   generateCellId,
   getEntryText,
-  kMeans2,
 } from "./hive-index.js";
 
 const NURSERY_FLUSH_THRESHOLD = 10;
@@ -28,11 +26,9 @@ const CELL_SPLIT_THRESHOLD = 20;
 
 export class HiveStore {
   private dataDir: string;
-  private embed: EmbedService;
 
-  constructor(dataDir: string, embed: EmbedService) {
+  constructor(dataDir: string) {
     this.dataDir = dataDir;
-    this.embed = embed;
   }
 
   private get hivePath(): string {
@@ -82,7 +78,6 @@ export class HiveStore {
     agentId?: string,
   ): Promise<MemoryEntry> {
     const now = new Date().toISOString();
-    const embedding = (await this.embed.getEmbedding(content)) ?? [];
 
     const entry: DirectEntry = {
       type: "direct",
@@ -92,7 +87,6 @@ export class HiveStore {
       content,
       tags,
       createdAt: now,
-      embedding,
       ...(agentId ? { agentId } : {}),
     };
 
@@ -124,7 +118,6 @@ export class HiveStore {
     tags: string[],
   ): Promise<ReferenceEntry> {
     const now = new Date().toISOString();
-    const embedding = (await this.embed.getEmbedding(description)) ?? [];
 
     const entry: ReferenceEntry = {
       type: "reference",
@@ -136,7 +129,6 @@ export class HiveStore {
       tags,
       createdAt: now,
       lastSynced: now,
-      embedding,
     };
 
     const hive = await this.loadHive();
@@ -173,16 +165,12 @@ export class HiveStore {
     if (leafIds.length === 0) {
       const allText = hive.nursery.map(getEntryText).join(" ");
       const cellId = generateCellId(allText);
-      const embeddings = hive.nursery
-        .map((e) => e.embedding)
-        .filter((e) => e.length > 0);
 
       hive.cells[cellId] = {
         id: cellId,
         type: "leaf",
         summary: allText.slice(0, 200),
         keywords: extractKeywords(allText),
-        centroid: computeCentroid(embeddings),
         count: hive.nursery.length,
       };
 
@@ -191,7 +179,7 @@ export class HiveStore {
       return;
     }
 
-    // Assign each nursery entry to the best matching leaf
+    // Assign each nursery entry to the best matching leaf (by keyword overlap)
     const assignments = new Map<string, CellEntry[]>();
     for (const leafId of leafIds) {
       assignments.set(leafId, []);
@@ -200,13 +188,11 @@ export class HiveStore {
     for (const entry of hive.nursery) {
       let bestLeaf = leafIds[0];
       let bestScore = -Infinity;
+      const entryKeywords = extractKeywords(getEntryText(entry));
 
       for (const leafId of leafIds) {
         const cell = hive.cells[leafId];
-        const score =
-          entry.embedding.length > 0 && cell.centroid.length > 0
-            ? cosineSim(entry.embedding, cell.centroid)
-            : 0;
+        const score = keywordOverlap(entryKeywords, cell.keywords);
         if (score > bestScore) {
           bestScore = score;
           bestLeaf = leafId;
@@ -231,12 +217,6 @@ export class HiveStore {
       const allText = cellData.entries.map(getEntryText).join(" ");
       cell.keywords = extractKeywords(allText);
       cell.summary = allText.slice(0, 200);
-      const embeddings = cellData.entries
-        .map((e) => e.embedding)
-        .filter((e) => e.length > 0);
-      if (embeddings.length > 0) {
-        cell.centroid = computeCentroid(embeddings);
-      }
 
       await this.saveCellData(cellData);
 
@@ -252,12 +232,9 @@ export class HiveStore {
     cellId: string,
     cellData: HiveCellData,
   ): Promise<void> {
-    const embeddings = cellData.entries.map((e) => e.embedding);
-    const hasEmbeddings = embeddings.some((e) => e.length > 0);
+    if (cellData.entries.length < 4) return;
 
-    if (!hasEmbeddings || cellData.entries.length < 4) return;
-
-    const [groupA, groupB] = kMeans2(embeddings);
+    const [groupA, groupB] = keywordSplit2(cellData.entries);
 
     if (groupA.length === 0 || groupB.length === 0) return;
 
@@ -270,15 +247,11 @@ export class HiveStore {
     const childIdA = generateCellId(textA);
     const childIdB = generateCellId(textB);
 
-    const embeddingsA = entriesA.map((e) => e.embedding).filter((e) => e.length > 0);
-    const embeddingsB = entriesB.map((e) => e.embedding).filter((e) => e.length > 0);
-
     hive.cells[childIdA] = {
       id: childIdA,
       type: "leaf",
       summary: textA.slice(0, 200),
       keywords: extractKeywords(textA),
-      centroid: computeCentroid(embeddingsA),
       count: entriesA.length,
     };
 
@@ -287,7 +260,6 @@ export class HiveStore {
       type: "leaf",
       summary: textB.slice(0, 200),
       keywords: extractKeywords(textB),
-      centroid: computeCentroid(embeddingsB),
       count: entriesB.length,
     };
 
@@ -298,7 +270,6 @@ export class HiveStore {
       type: "branch",
       summary: oldCell.summary,
       keywords: oldCell.keywords,
-      centroid: oldCell.centroid,
       count: oldCell.count,
       children: [childIdA, childIdB],
     };
@@ -309,7 +280,6 @@ export class HiveStore {
 
   /**
    * Get all entries across nursery and all leaf cells.
-   * Used for migration and full scans.
    */
   async getAllEntries(): Promise<CellEntry[]> {
     const hive = await this.loadHive();
@@ -328,8 +298,15 @@ export class HiveStore {
   }
 
   /**
+   * Get recent entries from nursery (for temporal synapse creation).
+   */
+  async getNurseryEntries(): Promise<CellEntry[]> {
+    const hive = await this.loadHive();
+    return [...hive.nursery];
+  }
+
+  /**
    * Remove entries matching a predicate from nursery and all leaf cells.
-   * Returns the count of removed entries.
    */
   async removeEntries(predicate: (entry: CellEntry) => boolean): Promise<number> {
     const hive = await this.loadHive();
@@ -363,7 +340,6 @@ export class HiveStore {
 
   /**
    * Remove all reference entries for a given project and source.
-   * Used during re-scan to replace stale references.
    */
   async removeReferences(projectId: string, source?: string): Promise<void> {
     const hive = await this.loadHive();

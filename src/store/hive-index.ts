@@ -17,37 +17,6 @@ const STOP_WORDS = new Set([
   "use", "used", "using", "get", "set", "new", "make", "like",
 ]);
 
-export function computeCentroid(embeddings: number[][]): number[] {
-  if (embeddings.length === 0) return [];
-  const dim = embeddings[0].length;
-  const result = new Array<number>(dim).fill(0);
-  for (const vec of embeddings) {
-    for (let i = 0; i < dim; i++) {
-      result[i] += vec[i];
-    }
-  }
-  const n = embeddings.length;
-  for (let i = 0; i < dim; i++) {
-    result[i] /= n;
-  }
-  return result;
-}
-
-export function cosineSim(a: number[], b: number[]): number {
-  if (a.length === 0 || b.length === 0) return 0;
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-  const len = Math.min(a.length, b.length);
-  for (let i = 0; i < len; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  const denom = Math.sqrt(normA) * Math.sqrt(normB);
-  return denom === 0 ? 0 : dot / denom;
-}
-
 export function extractKeywords(text: string): string[] {
   const lower = text.toLowerCase();
 
@@ -85,74 +54,68 @@ export function keywordOverlap(queryKeywords: string[], cellKeywords: string[]):
 }
 
 /**
- * k-means with k=2, 5 iterations of Lloyd's algorithm.
- * Returns two groups of indices.
+ * Keyword-based 2-split — partition entries into two groups
+ * by finding the most discriminative keyword and splitting on it.
+ *
+ * Replaces the old kMeans2 that required vector embeddings.
  */
-export function kMeans2(embeddings: number[][]): [number[], number[]] {
-  if (embeddings.length <= 2) {
-    return [[0], embeddings.length > 1 ? [1] : []];
+export function keywordSplit2(entries: CellEntry[]): [number[], number[]] {
+  if (entries.length <= 2) {
+    return [[0], entries.length > 1 ? [1] : []];
   }
 
-  const dim = embeddings[0].length;
+  // Extract keyword sets for each entry
+  const entryKeywords = entries.map((e) => new Set(extractKeywords(getEntryText(e))));
 
-  // Initialize centroids: first and farthest
-  let c0 = embeddings[0];
-  let maxDist = -1;
-  let farthestIdx = 1;
-  for (let i = 1; i < embeddings.length; i++) {
-    const d = 1 - cosineSim(c0, embeddings[i]);
-    if (d > maxDist) {
-      maxDist = d;
-      farthestIdx = i;
-    }
-  }
-  let c1 = embeddings[farthestIdx];
-
-  const assignments = new Array<number>(embeddings.length).fill(0);
-
-  for (let iter = 0; iter < 5; iter++) {
-    // Assign
-    for (let i = 0; i < embeddings.length; i++) {
-      const d0 = cosineSim(embeddings[i], c0);
-      const d1 = cosineSim(embeddings[i], c1);
-      assignments[i] = d0 >= d1 ? 0 : 1;
-    }
-
-    // Recompute centroids
-    const sum0 = new Array<number>(dim).fill(0);
-    const sum1 = new Array<number>(dim).fill(0);
-    let count0 = 0;
-    let count1 = 0;
-
-    for (let i = 0; i < embeddings.length; i++) {
-      const target = assignments[i] === 0 ? sum0 : sum1;
-      for (let d = 0; d < dim; d++) {
-        target[d] += embeddings[i][d];
-      }
-      if (assignments[i] === 0) count0++;
-      else count1++;
-    }
-
-    if (count0 > 0) {
-      c0 = sum0.map((v) => v / count0);
-    }
-    if (count1 > 0) {
-      c1 = sum1.map((v) => v / count1);
+  // Collect all keywords with their document frequency
+  const docFreq = new Map<string, number>();
+  for (const kwSet of entryKeywords) {
+    for (const kw of kwSet) {
+      docFreq.set(kw, (docFreq.get(kw) ?? 0) + 1);
     }
   }
 
-  const group0: number[] = [];
-  const group1: number[] = [];
-  for (let i = 0; i < assignments.length; i++) {
-    if (assignments[i] === 0) group0.push(i);
-    else group1.push(i);
+  // Find the most discriminative keyword (closest to 50% of docs)
+  const n = entries.length;
+  const halfN = n / 2;
+  let bestKeyword = "";
+  let bestScore = Infinity;
+
+  for (const [kw, freq] of docFreq) {
+    // Skip keywords that appear in all or one entry
+    if (freq <= 1 || freq >= n) continue;
+    const score = Math.abs(freq - halfN);
+    if (score < bestScore) {
+      bestScore = score;
+      bestKeyword = kw;
+    }
   }
 
-  // Ensure no empty cluster
-  if (group0.length === 0) return [group1.slice(0, 1), group1.slice(1)];
-  if (group1.length === 0) return [group0.slice(0, 1), group0.slice(1)];
+  // If no discriminative keyword found, fall back to simple halving
+  if (!bestKeyword) {
+    const mid = Math.ceil(n / 2);
+    return [
+      Array.from({ length: mid }, (_, i) => i),
+      Array.from({ length: n - mid }, (_, i) => i + mid),
+    ];
+  }
 
-  return [group0, group1];
+  // Split by the discriminative keyword
+  const groupA: number[] = [];
+  const groupB: number[] = [];
+  for (let i = 0; i < entries.length; i++) {
+    if (entryKeywords[i].has(bestKeyword)) {
+      groupA.push(i);
+    } else {
+      groupB.push(i);
+    }
+  }
+
+  // Ensure no empty group
+  if (groupA.length === 0) return [groupB.slice(0, 1), groupB.slice(1)];
+  if (groupB.length === 0) return [groupA.slice(0, 1), groupA.slice(1)];
+
+  return [groupA, groupB];
 }
 
 export function generateCellId(summary: string): string {

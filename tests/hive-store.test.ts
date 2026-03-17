@@ -1,39 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HiveStore } from "../src/store/hive-store.js";
-
-// Mock EmbedService
-vi.mock("../src/embed.js", () => ({
-  EmbedService: class {
-    available = false;
-    async init() {}
-    async addText() {}
-    async search() { return []; }
-    async remove() {}
-    async getEmbedding() { return null; }
-    count() { return 0; }
-    async close() {}
-  },
-}));
-
-// Create a mock embed service with controllable getEmbedding
-function createMockEmbed(returnEmbedding: number[] | null = null) {
-  return {
-    available: !!returnEmbedding,
-    async init() {},
-    async addText() {},
-    async search() { return []; },
-    async remove() {},
-    async getEmbedding() { return returnEmbedding; },
-    count() { return 0; },
-    async close() {},
-    get backend() { return "none" as const; },
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } as any;
-}
 
 describe("HiveStore", () => {
   let dataDir: string;
@@ -41,12 +11,12 @@ describe("HiveStore", () => {
 
   beforeEach(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "hive-store-test-"));
-    store = new HiveStore(dataDir, createMockEmbed());
+    store = new HiveStore(dataDir);
     await store.ensureDirs();
   });
 
   afterEach(async () => {
-    await rm(dataDir, { recursive: true, force: true });
+    try { await rm(dataDir, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
   describe("loadHive / saveHive", () => {
@@ -142,25 +112,10 @@ describe("HiveStore", () => {
 
   describe("splitCell", () => {
     it("splits a cell when it exceeds threshold", async () => {
-      // Create mock embed that returns distinct embeddings for splitting
-      let counter = 0;
-      const mockEmbed = createMockEmbed();
-      mockEmbed.getEmbedding = async () => {
-        counter++;
-        // Create two distinct clusters
-        if (counter <= 12) {
-          return [1, 0, 0, ...new Array(381).fill(0)];
-        } else {
-          return [0, 0, 1, ...new Array(381).fill(0)];
-        }
-      };
-
-      const splitStore = new HiveStore(dataDir, mockEmbed);
+      const splitStore = new HiveStore(dataDir);
       await splitStore.ensureDirs();
 
       // Store > 20 entries to trigger split.
-      // Flush happens at 10 entries. After 30 entries:
-      //   flush@10 → cell with 10; flush@20 → cell with 20; flush@30 → cell with 30 → split
       for (let i = 0; i < 30; i++) {
         await splitStore.storeDirectEntry("proj", "note", `Entry ${i}`, []);
       }
@@ -188,7 +143,6 @@ describe("HiveStore", () => {
           content: "hello",
           tags: [],
           createdAt: "2026-01-01",
-          embedding: [],
         }],
       });
 
@@ -216,7 +170,6 @@ describe("HiveStore", () => {
           content: "Cell entry",
           tags: [],
           createdAt: "2026-01-01",
-          embedding: [],
         }],
       });
 
@@ -264,7 +217,7 @@ describe("HiveStore", () => {
     it("creates cells directory on first write", async () => {
       const freshDir = await mkdtemp(join(tmpdir(), "hive-fresh-"));
       try {
-        const freshStore = new HiveStore(freshDir, createMockEmbed());
+        const freshStore = new HiveStore(freshDir);
         await freshStore.storeDirectEntry("proj", "note", "test", []);
 
         const hive = await freshStore.loadHive();
