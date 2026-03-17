@@ -63,14 +63,14 @@ Hive Memory sits **above** these tools as a meta-layer. It doesn't replace them 
                  │  (global)   │
                  └──────┬──────┘
                         │ keyword + graph search
-                 "JWT 관련 지식이 어디 있지?"
+                 "Where is JWT-related knowledge?"
                         │
          ┌──────────────┼──────────────┐
          ▼              ▼              ▼
     [direct]       [reference]    [reference]
-    proj-a의       proj-b의        proj-c의
-    JWT 결정       MEMORY.md에     CLAUDE.md에
-                   JWT 관련 메모   JWT 가이드
+    proj-a's       proj-b's        proj-c's
+    JWT decision   MEMORY.md has   CLAUDE.md has
+                   JWT notes       JWT guide
 ```
 
 - **Direct entries**: Knowledge your agent stores via `memory_store` — decisions, learnings, notes

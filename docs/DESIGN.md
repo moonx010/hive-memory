@@ -36,13 +36,13 @@ All knowledge lives in a **single global cell tree** organized by semantic simil
                  │  (global)   │
                  └──────┬──────┘
                         │ beam search
-                 "JWT 관련 지식이 어디 있지?"
+                 "Where is JWT-related knowledge?"
                         │
          ┌──────────────┼──────────────┐
          ▼              ▼              ▼
     [direct]       [reference]    [reference]
-    proj-a의       proj-b의        proj-c의
-    JWT 결정       MEMORY.md      CLAUDE.md
+    proj-a's       proj-b's        proj-c's
+    JWT decision   MEMORY.md      CLAUDE.md
 ```
 
 ## Data Model
