@@ -29,9 +29,10 @@ import { migrateAllProjects, scanProjectReferences, syncReferences } from "./sto
 import { HiveDatabase } from "./db/database.js";
 import type { ListEntitiesOptions, SearchEntitiesOptions } from "./db/database.js";
 import type { Entity } from "./types.js";
-import type { ConnectorRegistry } from "./connectors/types.js";
+import type { ConnectorRegistry, RawDocument } from "./connectors/types.js";
 import { createConnectorRegistry } from "./connectors/types.js";
 import { ConnectorStateMachine } from "./connectors/state-machine.js";
+import { CheckpointManager } from "./connectors/checkpoint.js";
 import type { TeamSync } from "./team/git-sync.js";
 import { EnrichmentEngine } from "./enrichment/engine.js";
 import { ClassifyProvider } from "./enrichment/providers/classify.js";
@@ -502,11 +503,25 @@ export class CortexStore {
     const phase = sm.getExecutionPhase(connectorId, full);
     sm.startSync(connectorId, phase);
 
-    let added = 0;
-    let updated = 0;
-    let skipped = 0;
+    // Checkpoint: only for initial phase syncs
+    let cpManager: CheckpointManager | undefined;
+    let resumedCounts = { added: 0, updated: 0, skipped: 0, errors: 0 };
+    if (phase === "initial") {
+      cpManager = new CheckpointManager(connectorId);
+      const existingCp = cpManager.load();
+      if (existingCp) {
+        resumedCounts = existingCp.counts;
+        console.error(`[sync:${connectorId}] Resuming from checkpoint (${existingCp.counts.added + existingCp.counts.updated} entities processed)`);
+      } else {
+        cpManager.create();
+      }
+    }
+
+    let added = resumedCounts.added;
+    let updated = resumedCounts.updated;
+    let skipped = resumedCounts.skipped;
     let archived = 0;
-    let errors = 0;
+    let errors = resumedCounts.errors;
     let lastError: string | undefined;
     const entityMap = new Map<string, string>(); // externalId → entityId
 
@@ -516,7 +531,8 @@ export class CortexStore {
 
     switch (phase) {
       case "initial":
-        gen = connector.fullSync();
+        // Pass checkpoint to connectors that support it (optional parameter)
+        gen = (connector.fullSync as (cp?: CheckpointManager) => AsyncGenerator<RawDocument>)(cpManager);
         break;
       case "rollback":
         if (connector.rollbackSync) {
@@ -582,10 +598,12 @@ export class CortexStore {
                 entityMap.set(draft.source.externalId, existing.id);
                 if (result.changed) {
                   updated++;
+                  cpManager?.updateCounts({ updated: 1 });
                 } else {
                   // Content unchanged — still stamp sync metadata
                   db.updateEntityAttributes(existing.id, syncMeta);
                   skipped++;
+                  cpManager?.updateCounts({ skipped: 1 });
                 }
               } else {
                 const now = new Date().toISOString();
@@ -612,10 +630,12 @@ export class CortexStore {
                 db.insertEntity(entity);
                 entityMap.set(draft.source.externalId, entity.id);
                 added++;
+                cpManager?.updateCounts({ added: 1 });
               }
             } catch (err) {
               errors++;
               lastError = err instanceof Error ? err.message : String(err);
+              cpManager?.updateCounts({ errors: 1 });
               console.error(`[sync:${connectorId}] Failed to upsert entity ${draft.source.externalId}: ${lastError}`);
             }
           }
@@ -627,6 +647,7 @@ export class CortexStore {
       }
     } catch (err) {
       // Generator-level error (e.g., API auth failure, network error)
+      // Checkpoint is preserved on error so next run can resume
       lastError = err instanceof Error ? err.message : String(err);
       console.error(`[sync:${connectorId}] Sync stream error: ${lastError}`);
 
@@ -654,6 +675,9 @@ export class CortexStore {
     if (connector.postSync) {
       connector.postSync(db, entityMap);
     }
+
+    // Delete checkpoint on successful completion
+    cpManager?.delete();
 
     // Complete sync via state machine (handles phase transitions + history)
     const now = new Date().toISOString();

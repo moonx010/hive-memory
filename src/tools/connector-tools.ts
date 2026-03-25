@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { HiveDatabase } from "../db/database.js";
+import { CheckpointManager } from "../connectors/checkpoint.js";
 import type { SafeToolFn } from "./index.js";
 
 // ── Helpers ──
@@ -98,6 +99,17 @@ export function registerConnectorTools(safeTool: SafeToolFn, db: HiveDatabase) {
         const cursorStr = c.syncCursor ? `  |  Cursor: ${c.syncCursor}` : "";
         lines.push(`${icon} ${c.id}  (${c.connectorType})`);
         lines.push(`    Status: ${c.status}  |  Phase: ${phase}  |  Last sync: ${lastSyncStr}  |  Entries: ${entryCount}${cursorStr}`);
+
+        // Show checkpoint progress if a resumable checkpoint exists
+        const cpManager = new CheckpointManager(c.id);
+        const cp = cpManager.load();
+        if (cp) {
+          const progress = cpManager.getProgress();
+          if (progress) {
+            lines.push(`    [Resumable] Checkpoint: ${progress.totalProcessed} processed  |  ${progress.streams} stream(s)  |  Last: ${relativeTime(progress.lastCheckpoint)}`);
+          }
+        }
+
         lines.push(``);
       }
 

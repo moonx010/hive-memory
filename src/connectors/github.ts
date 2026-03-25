@@ -8,6 +8,7 @@
  */
 
 import type { ConnectorPlugin, RawDocument, EntityDraft } from "./types.js";
+import type { CheckpointManager } from "./checkpoint.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -113,24 +114,6 @@ async function githubFetch(url: string, token: string): Promise<Response> {
   return res;
 }
 
-async function* paginatedFetch<T>(
-  baseUrl: string,
-  token: string,
-): AsyncGenerator<T> {
-  let url: string | null = baseUrl;
-  while (url) {
-    const res = await githubFetch(url, token);
-    const items = (await res.json()) as T[];
-    for (const item of items) {
-      yield item;
-    }
-    // Parse Link header for next page
-    const link = res.headers.get("Link") ?? "";
-    const nextMatch = /<([^>]+)>;\s*rel="next"/.exec(link);
-    url = nextMatch?.[1] ?? null;
-  }
-}
-
 // ── Connector ────────────────────────────────────────────────────────────────
 
 export class GitHubConnector implements ConnectorPlugin {
@@ -160,9 +143,9 @@ export class GitHubConnector implements ConnectorPlugin {
     return this.cursor;
   }
 
-  async *fullSync(): AsyncGenerator<RawDocument> {
+  async *fullSync(checkpoint?: CheckpointManager): AsyncGenerator<RawDocument> {
     const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-    yield* this._syncAll(since);
+    yield* this._syncAll(since, checkpoint);
   }
 
   async *incrementalSync(cursor?: string): AsyncGenerator<RawDocument> {
@@ -179,79 +162,169 @@ export class GitHubConnector implements ConnectorPlugin {
     }
   }
 
-  private async *_syncAll(since?: string): AsyncGenerator<RawDocument> {
+  private async *_syncAll(since?: string, checkpoint?: CheckpointManager): AsyncGenerator<RawDocument> {
     this.cursor = new Date().toISOString();
 
     for (const repo of this.repos) {
-      yield* this._syncPRs(repo, since);
-      yield* this._syncIssues(repo, since);
-      yield* this._syncADRFiles(repo);
+      yield* this._syncPRs(repo, since, checkpoint);
+      yield* this._syncIssues(repo, since, checkpoint);
+      yield* this._syncADRFiles(repo, checkpoint);
       yield* this._syncCodeowners(repo);
     }
   }
 
-  private async *_syncPRs(repo: string, since?: string): AsyncGenerator<RawDocument> {
+  private async *_syncPRs(
+    repo: string,
+    since?: string,
+    checkpoint?: CheckpointManager,
+  ): AsyncGenerator<RawDocument> {
+    const streamId = `github:${repo}:pulls`;
+
+    // Skip if stream was completed in a previous run
+    if (checkpoint?.isStreamComplete(streamId)) return;
+
     const sinceParam = since ? `&since=${since}` : "";
-    const url = `https://api.github.com/repos/${repo}/pulls?state=all&per_page=100&sort=updated&direction=desc${sinceParam}`;
+    const baseUrl = `https://api.github.com/repos/${repo}/pulls?state=all&per_page=100&sort=updated&direction=desc${sinceParam}`;
 
-    for await (const pr of paginatedFetch<GitHubPR>(url, this.token)) {
-      // Skip very old PRs when doing incremental
-      if (since && pr.updated_at < since) break;
+    // Resume from checkpoint page token if available
+    let url: string | null = checkpoint?.getStreamPageToken(streamId) ?? baseUrl;
 
-      yield {
-        externalId: `github:pr:${repo}:${pr.number}`,
-        source: "github",
-        content: [pr.title, pr.body ?? ""].join("\n\n"),
-        title: pr.title,
-        url: pr.html_url,
-        author: pr.user?.login,
-        timestamp: pr.updated_at,
-        metadata: {
-          type: "pull_request",
-          repo,
-          number: pr.number,
-          state: pr.state,
-          mergedAt: pr.merged_at,
-          createdAt: pr.created_at,
-        },
-      };
+    while (url) {
+      const res = await githubFetch(url, this.token);
+      const items = (await res.json()) as GitHubPR[];
+
+      for (const pr of items) {
+        // Skip very old PRs when doing incremental
+        if (since && pr.updated_at < since) {
+          checkpoint?.updateStream(streamId, { complete: true });
+          checkpoint?.flush();
+          return;
+        }
+
+        yield {
+          externalId: `github:pr:${repo}:${pr.number}`,
+          source: "github",
+          content: [pr.title, pr.body ?? ""].join("\n\n"),
+          title: pr.title,
+          url: pr.html_url,
+          author: pr.user?.login,
+          timestamp: pr.updated_at,
+          metadata: {
+            type: "pull_request",
+            repo,
+            number: pr.number,
+            state: pr.state,
+            mergedAt: pr.merged_at,
+            createdAt: pr.created_at,
+          },
+        };
+      }
+
+      // Parse next page URL from Link header
+      const link = res.headers.get("Link") ?? "";
+      const nextMatch = /<([^>]+)>;\s*rel="next"/.exec(link);
+      const nextUrl = nextMatch?.[1] ?? null;
+
+      // Checkpoint after each page
+      if (checkpoint) {
+        const pagesProcessed = (checkpoint.getProgress()?.streams ?? 0) + 1;
+        checkpoint.updateStream(streamId, {
+          pageToken: nextUrl ?? undefined,
+          pagesProcessed,
+        });
+        checkpoint.flush();
+      }
+
+      url = nextUrl;
     }
+
+    checkpoint?.updateStream(streamId, { complete: true });
+    checkpoint?.flush();
   }
 
-  private async *_syncIssues(repo: string, since?: string): AsyncGenerator<RawDocument> {
+  private async *_syncIssues(
+    repo: string,
+    since?: string,
+    checkpoint?: CheckpointManager,
+  ): AsyncGenerator<RawDocument> {
+    const streamId = `github:${repo}:issues`;
+
+    // Skip if stream was completed in a previous run
+    if (checkpoint?.isStreamComplete(streamId)) return;
+
     const sinceParam = since ? `&since=${since}` : "";
-    const url = `https://api.github.com/repos/${repo}/issues?state=all&per_page=100&sort=updated&direction=desc${sinceParam}`;
+    const baseUrl = `https://api.github.com/repos/${repo}/issues?state=all&per_page=100&sort=updated&direction=desc${sinceParam}`;
 
-    for await (const issue of paginatedFetch<GitHubIssue>(url, this.token)) {
-      // GitHub returns PRs in the issues endpoint — skip them
-      if (issue.pull_request !== undefined) continue;
-      if (since && issue.updated_at < since) break;
+    // Resume from checkpoint page token if available
+    let url: string | null = checkpoint?.getStreamPageToken(streamId) ?? baseUrl;
 
-      yield {
-        externalId: `github:issue:${repo}:${issue.number}`,
-        source: "github",
-        content: [issue.title, issue.body ?? ""].join("\n\n"),
-        title: issue.title,
-        url: issue.html_url,
-        author: issue.user?.login,
-        timestamp: issue.updated_at,
-        metadata: {
-          type: "issue",
-          repo,
-          number: issue.number,
-          state: issue.state,
-          labels: issue.labels.map((l) => l.name),
-          assignees: issue.assignees.map((a) => a.login),
-          createdAt: issue.created_at,
-        },
-      };
+    while (url) {
+      const res = await githubFetch(url, this.token);
+      const items = (await res.json()) as GitHubIssue[];
+
+      for (const issue of items) {
+        // GitHub returns PRs in the issues endpoint — skip them
+        if (issue.pull_request !== undefined) continue;
+        if (since && issue.updated_at < since) {
+          checkpoint?.updateStream(streamId, { complete: true });
+          checkpoint?.flush();
+          return;
+        }
+
+        yield {
+          externalId: `github:issue:${repo}:${issue.number}`,
+          source: "github",
+          content: [issue.title, issue.body ?? ""].join("\n\n"),
+          title: issue.title,
+          url: issue.html_url,
+          author: issue.user?.login,
+          timestamp: issue.updated_at,
+          metadata: {
+            type: "issue",
+            repo,
+            number: issue.number,
+            state: issue.state,
+            labels: issue.labels.map((l) => l.name),
+            assignees: issue.assignees.map((a) => a.login),
+            createdAt: issue.created_at,
+          },
+        };
+      }
+
+      // Parse next page URL from Link header
+      const link = res.headers.get("Link") ?? "";
+      const nextMatch = /<([^>]+)>;\s*rel="next"/.exec(link);
+      const nextUrl = nextMatch?.[1] ?? null;
+
+      // Checkpoint after each page
+      if (checkpoint) {
+        const pagesProcessed = (checkpoint.getProgress()?.streams ?? 0) + 1;
+        checkpoint.updateStream(streamId, {
+          pageToken: nextUrl ?? undefined,
+          pagesProcessed,
+        });
+        checkpoint.flush();
+      }
+
+      url = nextUrl;
     }
+
+    checkpoint?.updateStream(streamId, { complete: true });
+    checkpoint?.flush();
   }
 
-  private async *_syncADRFiles(repo: string): AsyncGenerator<RawDocument> {
+  private async *_syncADRFiles(
+    repo: string,
+    checkpoint?: CheckpointManager,
+  ): AsyncGenerator<RawDocument> {
     const adrPaths = ["docs/decisions", "docs/adr"];
 
     for (const adrPath of adrPaths) {
+      const streamId = `github:${repo}:adr:${adrPath}`;
+
+      // Skip if stream was completed in a previous run
+      if (checkpoint?.isStreamComplete(streamId)) continue;
+
       let items: GitHubContent[];
       try {
         const res = await githubFetch(
@@ -261,6 +334,8 @@ export class GitHubConnector implements ConnectorPlugin {
         items = (await res.json()) as GitHubContent[];
       } catch {
         // Directory doesn't exist — skip silently
+        checkpoint?.updateStream(streamId, { complete: true });
+        checkpoint?.flush();
         continue;
       }
 
@@ -291,6 +366,9 @@ export class GitHubConnector implements ConnectorPlugin {
           continue;
         }
       }
+
+      checkpoint?.updateStream(streamId, { complete: true });
+      checkpoint?.flush();
     }
   }
 
