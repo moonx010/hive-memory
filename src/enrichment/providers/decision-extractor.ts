@@ -140,8 +140,8 @@ export class DecisionExtractorProvider implements EnrichmentProvider {
     entity: Entity,
     ctx: EnrichmentContext,
   ): Promise<EnrichmentResult> {
-    let decisions: ExtractedDecision[] = [];
-    let actions: ExtractedAction[] = [];
+    let decisions: ExtractedDecision[];
+    let actions: ExtractedAction[];
     let extractionMethod: "llm" | "rule-based" = "rule-based";
 
     if (ctx.llm) {

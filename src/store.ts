@@ -370,7 +370,7 @@ export class CortexStore {
 
     // Step 2: Spreading activation from top-3 seeds
     const seedIds = filtered.slice(0, 3).map((e) => e.id);
-    let graphResults: HiveSearchResult[] = [];
+    const graphResults: HiveSearchResult[] = [];
 
     if (seedIds.length > 0) {
       const activated = spreadingActivationDb(db, seedIds, {

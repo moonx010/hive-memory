@@ -30,7 +30,7 @@ async function git(cwd: string, args: string[]): Promise<string> {
   } catch (err) {
     // Re-throw but strip the verbose stderr from the error message
     const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`git ${args[0]} failed: ${msg}`);
+    throw new Error(`git ${args[0]} failed: ${msg}`, { cause: err });
   }
 }
 

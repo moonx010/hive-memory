@@ -4,7 +4,6 @@ import type {
   BatchFilter,
   BatchResult,
   Entity,
-  EntityType,
   EnrichmentContext,
   EnrichmentProvider,
   EnrichmentResult,

@@ -484,7 +484,7 @@ export class CalendarConnector implements ConnectorPlugin {
     entityMap: Map<string, string>,
   ): void {
     // Create "attended" synapses (person → meeting)
-    for (const { event, calendarId, entityDrafts } of this._syncedDrafts) {
+    for (const { event, calendarId: _calendarId, entityDrafts } of this._syncedDrafts) {
       const meetingDraft = entityDrafts.find(
         (d) => d.entityType === "meeting",
       );

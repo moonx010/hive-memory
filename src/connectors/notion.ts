@@ -194,7 +194,7 @@ function extractKeywords(text: string): string[] {
   ];
 }
 
-function isTaskPage(page: NotionPage): boolean {
+function _isTaskPage(page: NotionPage): boolean {
   for (const prop of Object.values(page.properties)) {
     if (prop.type === "status" || prop.type === "checkbox") return true;
   }

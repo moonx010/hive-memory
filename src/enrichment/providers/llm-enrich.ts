@@ -3,7 +3,6 @@ import type {
   EnrichmentContext,
   EnrichmentProvider,
   EnrichmentResult,
-  EntityType,
 } from "../types.js";
 
 const RETRY_MAX = 3;

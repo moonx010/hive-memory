@@ -1,7 +1,6 @@
 import { readFile, readdir, rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import type { HiveDatabase } from "./database.js";
 import type { Entity } from "../types.js";
 
@@ -207,7 +206,7 @@ function parseSessionMarkdown(
   const date = dateMatch[1];
 
   // Parse summary section
-  const summaryMatch = content.match(/^## Summary\s*\n+([\s\S]*?)(?=^##|\Z)/m);
+  const summaryMatch = content.match(/^## Summary\s*\n+([\s\S]*?)(?=^##|$)/m);
   const summary = summaryMatch ? summaryMatch[1].trim() : "";
   if (!summary) return null;
 
@@ -384,7 +383,7 @@ export async function migrateFromV2(
       // ── 5. Load sessions/*.md ────────────────────────────────────────────
       const sessionsDir = join(dataDir, "projects", proj.id, "sessions");
       if (existsSync(sessionsDir)) {
-        let sessionFiles: string[] = [];
+        let sessionFiles: string[];
         try {
           sessionFiles = await readdir(sessionsDir);
         } catch {

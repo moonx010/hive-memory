@@ -133,7 +133,7 @@ function formatRow(
   predictedTags: string[],
   expectedDomain: string | null,
   predictedDomain: string | null,
-  enriched: boolean,
+  _enriched: boolean,
 ): string {
   const expTags = expectedTags.join(",") || "(none)";
   const predTags = predictedTags.join(",") || "(none)";

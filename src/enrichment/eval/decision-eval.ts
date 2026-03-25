@@ -40,7 +40,7 @@ function buildEntity(sample: EvalSample): Entity {
 }
 
 // Minimal no-op context — DecisionExtractorProvider.extractWithRules does not use ctx
-const ctx = {
+const _ctx = {
   db: null as unknown as EnrichmentContext["db"],
   findRelated: () => [],
 } satisfies EnrichmentContext;
