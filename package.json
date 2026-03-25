@@ -21,7 +21,9 @@
     "test": "vitest",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "eval:enrichment": "npx tsx src/enrichment/eval/eval.ts",
+    "eval:decisions": "npx tsx src/enrichment/eval/decision-eval.ts"
   },
   "keywords": [
     "mcp",
@@ -49,10 +51,12 @@
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
+    "better-sqlite3": "^12.8.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "eslint": "^10.0.2",
     "tsx": "^4.19.0",

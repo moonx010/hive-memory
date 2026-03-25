@@ -1,7 +1,8 @@
-import { appendFile } from "node:fs/promises";
+import { appendFile, writeFile } from "node:fs/promises";
 import type { CortexStore } from "./store.js";
 import type { MemoryCategory } from "./types.js";
 import { validateId } from "./store/io.js";
+import { MeetingAgent } from "./meeting/agent.js";
 
 interface CliArgs {
   command: string;
@@ -13,6 +14,8 @@ interface CliArgs {
   output?: string;
   json?: boolean;
   content?: string;
+  since?: string;
+  type?: string;
 }
 
 export function parseCliArgs(args: string[]): CliArgs {
@@ -42,6 +45,12 @@ export function parseCliArgs(args: string[]): CliArgs {
         break;
       case "--json":
         result.json = true;
+        break;
+      case "--since":
+        result.since = args[++i];
+        break;
+      case "--type":
+        result.type = args[++i];
         break;
       case "--no-embed":
         // Legacy flag — ignored (embeddings removed)
@@ -84,6 +93,12 @@ export async function handleCli(
       break;
     case "cleanup":
       await handleCleanup(store, initStore, parsed);
+      break;
+    case "enrich":
+      await handleEnrich(store, initStore, parsed);
+      break;
+    case "meeting":
+      await handleMeeting(store, initStore, parsed);
       break;
     default:
       printUsage();
@@ -266,6 +281,59 @@ async function handleCleanup(
   console.log(`Removed ${removed} expired status entries.`);
 }
 
+async function handleEnrich(
+  store: CortexStore,
+  initStore: () => Promise<void>,
+  args: CliArgs,
+): Promise<void> {
+  await initStore();
+  const result = await store.enrichBatch({
+    since: args.since,
+    entityType: args.type
+      ? (args.type.split(",") as import("./types.js").EntityType[])
+      : undefined,
+    limit: args.limit ?? 100,
+    unenrichedOnly: true,
+  });
+  console.log(
+    `Enriched ${result.enriched}/${result.processed} entities (batchId: ${result.batchId})`,
+  );
+  if (result.errors > 0) {
+    console.log(`Errors: ${result.errors}`);
+  }
+}
+
+async function handleMeeting(
+  store: CortexStore,
+  initStore: () => Promise<void>,
+  args: CliArgs,
+): Promise<void> {
+  if (!args.content) {
+    console.error("Usage: hive-memory meeting <transcript-file> [--title <title>] [--output <file>]");
+    process.exit(1);
+  }
+
+  await initStore();
+  const agent = new MeetingAgent(store.database, store.enrichmentEngine);
+
+  const result = await agent.process({
+    transcriptPath: args.content,
+    title: args.query, // --query doubles as --title for meeting
+    date: args.since,
+  });
+
+  if (args.output) {
+    await writeFile(args.output, result.markdownOutput, "utf-8");
+    console.log(`Meeting notes written to ${args.output}`);
+  } else {
+    console.log(result.markdownOutput);
+  }
+
+  console.error(
+    `Processed meeting: ${result.decisionsCreated} decisions, ${result.actionsCreated} actions`,
+  );
+}
+
 function printUsage(): void {
   console.log(`Usage: hive-memory <command> [options]
 
@@ -276,6 +344,8 @@ Commands:
   inject    Recall memories and append to file
   sync      Sync external agent memory files
   cleanup   Remove expired entries
+  enrich    Run enrichment on entities (--since, --type, --limit)
+  meeting   Process a meeting transcript (--title, --output)
 
   hook session-end    Auto-save session (Claude Code hook)
 

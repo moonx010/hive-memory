@@ -73,11 +73,11 @@ describe("Tool handlers", () => {
     await rm(projectDir, { recursive: true, force: true });
   });
 
-  // ── 10 tools registered ───────────────────────────
+  // ── tools registered ───────────────────────────
 
-  it("registers exactly 10 tools", () => {
-    expect(handlers.size).toBe(10);
-    expect([...handlers.keys()].sort()).toEqual([
+  it("registers v2 tools (backward-compatible set)", () => {
+    // v2 tools that must always be present
+    const v2Tools = [
       "memory_connections",
       "memory_link",
       "memory_recall",
@@ -88,7 +88,12 @@ describe("Tool handlers", () => {
       "project_search",
       "project_status",
       "session_save",
-    ]);
+    ];
+    for (const toolName of v2Tools) {
+      expect(handlers.has(toolName), `expected tool "${toolName}" to be registered`).toBe(true);
+    }
+    // v3 tools are also registered now (browse, trail, connector, team tools)
+    expect(handlers.size).toBeGreaterThanOrEqual(10);
   });
 
   // ── project_register (upsert) ─────────────────────────

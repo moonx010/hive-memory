@@ -1,0 +1,252 @@
+[
+  {
+    "id": "dae-001",
+    "entityContent": "After a long discussion, we decided to migrate the authentication layer to OAuth2. The team agreed this would improve security and reduce maintenance overhead.",
+    "entityType": "conversation",
+    "attributes": {},
+    "expectedSignalsFound": true,
+    "expectedDecisions": 2,
+    "expectedActions": 0,
+    "notes": "explicit: 'decided to', 'agreed'"
+  },
+  {
+    "id": "dae-002",
+    "entityContent": "The board approved the Q3 budget proposal for infrastructure upgrades. All stakeholders were present and the vote was unanimous in favor of the plan.",
+    "entityType": "meeting",
+    "attributes": {},
+    "expectedSignalsFound": true,
+    "expectedDecisions": 1,
+    "expectedActions": 0,
+    "notes": "explicit: 'approved'"
+  },
+  {
+    "id": "dae-003",
+    "entityContent": "We agreed to use PostgreSQL instead of MySQL for the new data warehouse. The decision was based on better JSON support and more flexible indexing options.",
+    "entityType": "document",
+    "attributes": {},
+    "expectedSignalsFound": true,
+    "expectedDecisions": 1,
+    "expectedActions": 0,
+    "notes": "explicit: 'agreed to'"
+  },
+  {
+    "id": "dae-004",
+    "entityContent": "The team finalized the deployment schedule for the next release. We decided to use blue-green deployments to minimize downtime during the production cutover.",
+    "entityType": "conversation",
+    "attributes": {},
+    "expectedSignalsFound": true,
+    "expectedDecisions": 2,
+    "expectedActions": 0,
+    "notes": "explicit: 'finalized', 'decided to'"
+  },
+  {
+    "id": "dae-005",
+    "entityContent": "After evaluating three vendors, management approved the contract with Acme Corp for cloud hosting services. This covers a two-year commitment at the negotiated rate.",
+    "entityType": "document",
+    "attributes": {},
+    "expectedSignalsFound": true,
+    "expectedDecisions": 1,
+    "expectedActions": 0,
+    "notes": "explicit: 'approved'"
+  },
+  {
+    "id": "dae-006",
+    "entityContent": "Going forward, all API endpoints must include rate limiting headers. This will help us better manage traffic and prevent abuse from automated clients.",
+    "entityType": "message",
+    "attributes": {},
+    "expectedSignalsFound": true,
+    "expectedDecisions": 1,
+    "expectedActions": 0,
+    "notes": "implicit: 'going forward'"
+  },
+  {
+    "id": "dae-007",
+    "entityContent": "Our approach will be to use feature flags for all new functionality. This gives us the ability to roll back quickly without a full deployment if issues arise.",
+    "entityType": "document",
+    "attributes": {},
+    "expectedSignalsFound": true,
+    "expectedDecisions": 1,
+    "expectedActions": 0,
+    "notes": "implicit: 'our approach will'"
+  },
+  {
+    "id": "dae-008",
+    "entityContent": "Consensus: the team will adopt trunk-based development instead of the current gitflow process. Short-lived feature branches are preferred to reduce merge conflicts.",
+    "entityType": "meeting",
+    "attributes": {},
+    "expectedSignalsFound": true,
+    "expectedDecisions": 1,
+    "expectedActions": 0,
+    "notes": "implicit: 'consensus:'"
+  },
+  {
+    "id": "dae-009",
+    "entityContent": "Let's go with the microservices architecture for the payment service. We'll start with three bounded contexts: billing, subscriptions, and invoices.",
+    "entityType": "conversation",
+    "attributes": {},
+    "expectedSignalsFound": true,
+    "expectedDecisions": 1,
+    "expectedActions": 0,
+    "notes": "implicit: \"let's go with\""
+  },
+  {
+    "id": "dae-010",
+    "entityContent": "We're going with React for the frontend instead of Vue. The team has more experience with React and the ecosystem is more mature for our use case.",
+    "entityType": "conversation",
+    "attributes": {},
+    "expectedSignalsFound": true,
+    "expectedDecisions": 1,
+    "expectedActions": 0,
+    "notes": "implicit: \"we're going with\""
+  },
+  {
+    "id": "dae-011",
+    "entityContent": "Action item: @alice will set up the CI/CD pipeline for the new staging environment before the end of the sprint. She will document the configuration steps as well.",
+    "entityType": "message",
+    "attributes": {},
+    "expectedSignalsFound": true,
+    "expectedDecisions": 0,
+    "expectedActions": 1,
+    "notes": "action: 'Action item:', '@alice will'"
+  },
+  {
+    "id": "dae-012",
+    "entityContent": "TODO: @bob needs to update the database migration scripts to handle null values in legacy records. This must be completed by Friday before the release goes out.",
+    "entityType": "message",
+    "attributes": {},
+    "expectedSignalsFound": true,
+    "expectedDecisions": 0,
+    "expectedActions": 1,
+    "notes": "action: 'TODO:', 'needs to', 'by Friday'"
+  },
+  {
+    "id": "dae-013",
+    "entityContent": "[ ] Write unit tests for the new authentication module\nAll tests should cover both success and failure paths including edge cases for token expiry.",
+    "entityType": "document",
+    "attributes": {},
+    "expectedSignalsFound": true,
+    "expectedDecisions": 0,
+    "expectedActions": 1,
+    "notes": "action: checkbox '[ ]'"
+  },
+  {
+    "id": "dae-014",
+    "entityContent": "The performance optimization task is assigned to @carol and is due by end of week. She will profile the slow queries and add appropriate indexes to the main tables.",
+    "entityType": "message",
+    "attributes": {},
+    "expectedSignalsFound": true,
+    "expectedDecisions": 0,
+    "expectedActions": 1,
+    "notes": "action: 'assigned to', 'due by', 'end of week'"
+  },
+  {
+    "id": "dae-015",
+    "entityContent": "Due date: December 15. The security audit report needs to be completed and submitted to compliance. @dave will handle the final review and sign-off.",
+    "entityType": "document",
+    "attributes": {},
+    "expectedSignalsFound": true,
+    "expectedDecisions": 0,
+    "expectedActions": 1,
+    "notes": "action: 'due date:', '@dave will'"
+  },
+  {
+    "id": "dae-016",
+    "entityContent": "We decided to adopt GraphQL for the new API layer going forward. This will simplify client data fetching. Action item: @eve will create the initial schema definitions by end of month.",
+    "entityType": "conversation",
+    "attributes": {},
+    "expectedSignalsFound": true,
+    "expectedDecisions": 2,
+    "expectedActions": 1,
+    "notes": "mixed: explicit decision + going forward + action item"
+  },
+  {
+    "id": "dae-017",
+    "entityContent": "Consensus: we're going with serverless functions for background jobs. @frank will migrate the first three jobs by next Friday as a proof of concept.",
+    "entityType": "meeting",
+    "attributes": {},
+    "expectedSignalsFound": true,
+    "expectedDecisions": 2,
+    "expectedActions": 1,
+    "notes": "mixed: consensus + going with + action with deadline"
+  },
+  {
+    "id": "dae-018",
+    "entityContent": "The team agreed to use Terraform for infrastructure as code. TODO: @grace should complete the initial module structure by end of day Wednesday.",
+    "entityType": "document",
+    "attributes": {},
+    "expectedSignalsFound": true,
+    "expectedDecisions": 1,
+    "expectedActions": 1,
+    "notes": "mixed: agreed to + TODO with deadline"
+  },
+  {
+    "id": "dae-019",
+    "entityContent": "[ ] Migrate user data to new schema\n[ ] Update API documentation for v2 endpoints\n[ ] Add integration tests for payment flow\n[ ] Deploy hotfix to staging environment",
+    "entityType": "document",
+    "attributes": {},
+    "expectedSignalsFound": true,
+    "expectedDecisions": 0,
+    "expectedActions": 4,
+    "notes": "checkbox-style with multiple [ ] items"
+  },
+  {
+    "id": "dae-020",
+    "entityContent": "[ ] Set up monitoring dashboards for production\n[ ] Configure alerting thresholds for error rates\n[ ] Write runbook for common failure scenarios\n[ ] Schedule post-incident review with the on-call team",
+    "entityType": "document",
+    "attributes": {},
+    "expectedSignalsFound": true,
+    "expectedDecisions": 0,
+    "expectedActions": 4,
+    "notes": "checkbox-style with multiple [ ] items, operations context"
+  },
+  {
+    "id": "dae-021",
+    "entityContent": "The weather in San Francisco today is partly cloudy with temperatures around 65 degrees Fahrenheit. Expect light winds from the northwest throughout the afternoon.",
+    "entityType": "document",
+    "attributes": {},
+    "expectedSignalsFound": false,
+    "expectedDecisions": 0,
+    "expectedActions": 0,
+    "notes": "no-signal: weather report with no decisions or actions"
+  },
+  {
+    "id": "dae-022",
+    "entityContent": "The quarterly revenue report shows a 12% increase in ARR compared to last quarter. Customer acquisition costs have remained stable at $450 per new customer on average.",
+    "entityType": "document",
+    "attributes": {},
+    "expectedSignalsFound": false,
+    "expectedDecisions": 0,
+    "expectedActions": 0,
+    "notes": "no-signal: financial report with factual data only"
+  },
+  {
+    "id": "dae-023",
+    "entityContent": "The system architecture diagram shows three main components: the API gateway, the microservices layer, and the data storage tier. Each tier communicates via message queues.",
+    "entityType": "document",
+    "attributes": {},
+    "expectedSignalsFound": false,
+    "expectedDecisions": 0,
+    "expectedActions": 0,
+    "notes": "no-signal: descriptive architecture overview"
+  },
+  {
+    "id": "dae-024",
+    "entityContent": "User onboarding flow consists of five steps: email verification, profile setup, team invitation, tool integration, and tutorial completion. Average completion rate is 78%.",
+    "entityType": "document",
+    "attributes": {},
+    "expectedSignalsFound": false,
+    "expectedDecisions": 0,
+    "expectedActions": 0,
+    "notes": "no-signal: process description with no imperative content"
+  },
+  {
+    "id": "dae-025",
+    "entityContent": "The database schema includes tables for users, sessions, events, and audit logs. Foreign key constraints ensure referential integrity across all related tables in the system.",
+    "entityType": "document",
+    "attributes": {},
+    "expectedSignalsFound": false,
+    "expectedDecisions": 0,
+    "expectedActions": 0,
+    "notes": "no-signal: technical description with no decisions or action items"
+  }
+]

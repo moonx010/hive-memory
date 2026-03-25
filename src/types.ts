@@ -192,3 +192,107 @@ export interface CoactivationIndex {
   /** "entryA:entryB" → co-activation count (sorted key pair) */
   counts: Record<string, number>;
 }
+
+// ── v3 Entity Types ───────────────────────────────────────────────────────────
+
+/**
+ * Entity type for v3.
+ * Phase 1: memory / reference / decision
+ * Phase 2: person / document
+ * Phase 3: conversation / message / meeting / task / event / snippet
+ */
+export type EntityType =
+  | "memory"
+  | "reference"
+  | "decision" // Phase 1
+  | "person"
+  | "document" // Phase 2
+  | "conversation"
+  | "message"
+  | "meeting"
+  | "task"
+  | "event"
+  | "snippet"; // Phase 3
+
+/**
+ * Extended axon type for v3 (adds relationship types for rich entity graph).
+ * Supersedes the v2 AxonType — kept for backward compatibility.
+ */
+export type AxonTypeV3 =
+  // v2 existing
+  | "temporal"
+  | "causal"
+  | "semantic"
+  | "refinement"
+  | "conflict"
+  | "dependency"
+  | "derived"
+  // v3 new
+  | "authored"
+  | "attended"
+  | "mentioned"
+  | "contains"
+  | "supersedes"
+  | "implements"
+  | "belongs_to"
+  | "related";
+
+export type DomainType =
+  | "code"
+  | "documents"
+  | "conversations"
+  | "meetings"
+  | "incidents"
+  | "product"
+  | "operations";
+
+/** Phase 1: always 'local'. Phase 2: 'local'|'team:{id}'. Phase 3: + 'org:{id}' */
+export type NamespaceType = "local" | `team:${string}` | `org:${string}`;
+
+export type VisibilityType = "personal" | "team";
+
+export type ConfidenceType = "confirmed" | "inferred";
+
+export type EntityStatus = "active" | "superseded" | "archived";
+
+export interface EntitySource {
+  system: string;
+  externalId?: string;
+  url?: string;
+  connector?: string;
+}
+
+/**
+ * Entity — the core v3 unit of knowledge.
+ * Replaces DirectEntry + ReferenceEntry from v2.
+ */
+export interface Entity {
+  id: string;
+  entityType: EntityType;
+  project?: string;
+  namespace: string;
+  title?: string;
+  content: string;
+  tags: string[];
+  keywords: string[];
+  attributes: Record<string, unknown>;
+  source: EntitySource;
+  author?: string;
+  visibility: VisibilityType;
+  domain: DomainType;
+  confidence: ConfidenceType;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt?: string;
+  status: EntityStatus;
+  supersededBy?: string;
+}
+
+export interface ConnectorConfig {
+  id: string;
+  connectorType: string;
+  config: Record<string, unknown>;
+  lastSync?: string;
+  status: "idle" | "syncing" | "error";
+  syncCursor?: string;
+}
