@@ -296,4 +296,6 @@ export interface ConnectorConfig {
   lastSync?: string;
   status: "idle" | "syncing" | "error";
   syncCursor?: string;
+  syncPhase?: string;
+  syncHistory?: string;
 }

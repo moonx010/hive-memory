@@ -31,6 +31,7 @@ import type { ListEntitiesOptions, SearchEntitiesOptions } from "./db/database.j
 import type { Entity } from "./types.js";
 import type { ConnectorRegistry } from "./connectors/types.js";
 import { createConnectorRegistry } from "./connectors/types.js";
+import { ConnectorStateMachine } from "./connectors/state-machine.js";
 import type { TeamSync } from "./team/git-sync.js";
 import { EnrichmentEngine } from "./enrichment/engine.js";
 import { ClassifyProvider } from "./enrichment/providers/classify.js";
@@ -491,6 +492,12 @@ export class CortexStore {
     }
 
     const db = this.database;
+    const sm = new ConnectorStateMachine(db);
+
+    // Determine execution phase and mark connector as syncing
+    const phase = sm.getExecutionPhase(connectorId, full);
+    sm.startSync(connectorId, phase);
+
     let added = 0;
     let updated = 0;
     let skipped = 0;
@@ -498,16 +505,30 @@ export class CortexStore {
     let lastError: string | undefined;
     const entityMap = new Map<string, string>(); // externalId → entityId
 
-    // Mark connector as syncing
-    db.upsertConnector({
-      id: connectorId,
-      connectorType: connector.id,
-      config: {},
-      status: "syncing",
-    });
+    // Select generator based on phase
+    const cursor = phase === "initial" ? undefined : connector.getCursor();
+    let gen: ReturnType<typeof connector.incrementalSync>;
 
-    const cursor = full ? undefined : connector.getCursor();
-    const gen = full ? connector.fullSync() : connector.incrementalSync(cursor);
+    switch (phase) {
+      case "initial":
+        gen = connector.fullSync();
+        break;
+      case "rollback":
+        if (connector.rollbackSync) {
+          const window = {
+            since: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
+            until: new Date().toISOString(),
+          };
+          gen = connector.rollbackSync(window);
+        } else {
+          gen = connector.incrementalSync(cursor);
+        }
+        break;
+      case "incremental":
+      default:
+        gen = connector.incrementalSync(cursor);
+        break;
+    }
 
     try {
       for await (const doc of gen) {
@@ -579,12 +600,9 @@ export class CortexStore {
 
       // Save partial progress before re-throwing fatal errors
       const now = new Date().toISOString();
-      db.upsertConnector({
-        id: connectorId,
-        connectorType: connector.id,
-        config: {},
+      const finalErrors = errors + 1;
+      sm.completeSync(connectorId, { added, updated, skipped, errors: finalErrors, lastError }, {
         lastSync: now,
-        status: "error",
         syncCursor: connector.getCursor(),
       });
 
@@ -597,7 +615,7 @@ export class CortexStore {
         }
       }
 
-      return { added, updated, skipped, errors: errors + 1, lastError };
+      return { added, updated, skipped, errors: finalErrors, lastError };
     }
 
     // Post-sync hook for connector-specific synapse creation
@@ -605,14 +623,10 @@ export class CortexStore {
       connector.postSync(db, entityMap);
     }
 
-    // Update connector state
+    // Complete sync via state machine (handles phase transitions + history)
     const now = new Date().toISOString();
-    db.upsertConnector({
-      id: connectorId,
-      connectorType: connector.id,
-      config: {},
+    sm.completeSync(connectorId, { added, updated, skipped, errors, lastError }, {
       lastSync: now,
-      status: errors > 0 ? "error" : "idle",
       syncCursor: connector.getCursor(),
     });
 

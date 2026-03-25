@@ -50,7 +50,8 @@ export function registerConnectorTools(safeTool: SafeToolFn, db: HiveDatabase) {
       if (!connector) {
         lines.push(`Connector "${connectorId}" not found.`);
       } else {
-        lines.push(`Status: ${connector.status}  |  Last sync: ${connector.lastSync ? relativeTime(connector.lastSync) : "never"}`);
+        const phase = connector.syncPhase ?? "initial";
+        lines.push(`Status: ${connector.status}  |  Phase: ${phase}  |  Last sync: ${connector.lastSync ? relativeTime(connector.lastSync) : "never"}`);
       }
 
       return { content: [{ type: "text" as const, text: lines.join("\n") }] };
@@ -92,9 +93,10 @@ export function registerConnectorTools(safeTool: SafeToolFn, db: HiveDatabase) {
         const icon = statusIcons[c.status] ?? "[ ]";
         const lastSyncStr = c.lastSync ? relativeTime(c.lastSync) : "never";
         const entryCount = db.countEntities({ namespace: c.id });
+        const phase = c.syncPhase ?? "initial";
 
         lines.push(`${icon} ${c.id}  (${c.connectorType})`);
-        lines.push(`    Status: ${c.status}  |  Last sync: ${lastSyncStr}  |  Entries: ${entryCount}`);
+        lines.push(`    Status: ${c.status}  |  Phase: ${phase}  |  Last sync: ${lastSyncStr}  |  Entries: ${entryCount}`);
         lines.push(``);
       }
 

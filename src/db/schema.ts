@@ -113,7 +113,9 @@ export function createSchema(db: Database): void {
       config         TEXT NOT NULL DEFAULT '{}',
       last_sync      TEXT,
       status         TEXT DEFAULT 'idle',
-      sync_cursor    TEXT
+      sync_cursor    TEXT,
+      sync_phase     TEXT NOT NULL DEFAULT 'initial',
+      sync_history   TEXT NOT NULL DEFAULT '[]'
     );
 
     -- ── indexes ───────────────────────────────────────────────────────────────
@@ -160,6 +162,18 @@ export function createSchema(db: Database): void {
   // v3 migration: add content_hash column to existing databases
   try {
     db.exec(`ALTER TABLE entities ADD COLUMN content_hash TEXT`);
+  } catch {
+    // Column already exists (fresh DB or already migrated) — safe to ignore
+  }
+
+  // v3 migration: add sync_phase and sync_history columns to connectors table
+  try {
+    db.exec(`ALTER TABLE connectors ADD COLUMN sync_phase TEXT NOT NULL DEFAULT 'initial'`);
+  } catch {
+    // Column already exists (fresh DB or already migrated) — safe to ignore
+  }
+  try {
+    db.exec(`ALTER TABLE connectors ADD COLUMN sync_history TEXT NOT NULL DEFAULT '[]'`);
   } catch {
     // Column already exists (fresh DB or already migrated) — safe to ignore
   }

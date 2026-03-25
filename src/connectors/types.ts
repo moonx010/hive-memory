@@ -4,6 +4,19 @@
  * them into EntityDraft objects ready for ingestion into the Hive store.
  */
 
+export type SyncPhase = "initial" | "incremental" | "rollback";
+
+export interface SyncHistoryEntry {
+  phase: SyncPhase;
+  startedAt: string;
+  completedAt?: string;
+  added: number;
+  updated: number;
+  skipped: number;
+  errors: number;
+  lastError?: string;
+}
+
 export interface ConnectorPlugin {
   readonly id: string;
   readonly name: string;
@@ -27,6 +40,10 @@ export interface ConnectorPlugin {
 
   /** Get the current sync cursor (ISO date or opaque string) */
   getCursor(): string | undefined;
+
+  /** Optional: re-sync entities from the past N hours to catch retroactive edits/deletes.
+   *  Only called during ROLLBACK phase. Falls back to incrementalSync if not implemented. */
+  rollbackSync?(window: { since: string; until: string }): AsyncGenerator<RawDocument>;
 
   /** Optional post-sync hook for creating synapses after all entities are upserted.
    *  entityMap maps source.externalId → entity.id for all entities processed in this sync. */

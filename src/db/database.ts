@@ -87,6 +87,8 @@ interface ConnectorRow {
   last_sync: string | null;
   status: string;
   sync_cursor: string | null;
+  sync_phase: string;
+  sync_history: string;
 }
 
 interface EntityAliasRow {
@@ -326,6 +328,8 @@ function rowToConnector(row: ConnectorRow): ConnectorConfig {
     lastSync: row.last_sync ?? undefined,
     status: row.status as ConnectorConfig["status"],
     syncCursor: row.sync_cursor ?? undefined,
+    syncPhase: row.sync_phase ?? "initial",
+    syncHistory: row.sync_history ?? "[]",
   };
 }
 
@@ -841,14 +845,16 @@ export class HiveDatabase {
 
   upsertConnector(connector: ConnectorConfig): void {
     this.db.prepare(`
-      INSERT INTO connectors (id, connector_type, config, last_sync, status, sync_cursor)
-      VALUES (@id, @connector_type, @config, @last_sync, @status, @sync_cursor)
+      INSERT INTO connectors (id, connector_type, config, last_sync, status, sync_cursor, sync_phase, sync_history)
+      VALUES (@id, @connector_type, @config, @last_sync, @status, @sync_cursor, @sync_phase, @sync_history)
       ON CONFLICT(id) DO UPDATE SET
         connector_type = excluded.connector_type,
         config = excluded.config,
         last_sync = excluded.last_sync,
         status = excluded.status,
-        sync_cursor = excluded.sync_cursor
+        sync_cursor = excluded.sync_cursor,
+        sync_phase = excluded.sync_phase,
+        sync_history = excluded.sync_history
     `).run({
       id: connector.id,
       connector_type: connector.connectorType,
@@ -856,6 +862,8 @@ export class HiveDatabase {
       last_sync: connector.lastSync ?? null,
       status: connector.status,
       sync_cursor: connector.syncCursor ?? null,
+      sync_phase: connector.syncPhase ?? "initial",
+      sync_history: connector.syncHistory ?? "[]",
     });
   }
 
