@@ -88,6 +88,16 @@ interface ConnectorRow {
   sync_cursor: string | null;
 }
 
+interface EntityAliasRow {
+  id: string;
+  canonical_id: string;
+  alias_system: string;
+  alias_value: string;
+  alias_type: string;
+  confidence: string;
+  created_at: string;
+}
+
 // ── Domain types ─────────────────────────────────────────────────────────────
 
 export interface SynapseRecord {
@@ -129,6 +139,16 @@ export interface SessionRecord {
   nextTasks: string[];
   decisions: string[];
   learnings: string[];
+  createdAt: string;
+}
+
+export interface EntityAlias {
+  id: string;
+  canonicalId: string;
+  aliasSystem: string;
+  aliasValue: string;
+  aliasType: "external_id" | "email" | "name" | "handle";
+  confidence: "confirmed" | "inferred";
   createdAt: string;
 }
 
@@ -279,6 +299,18 @@ function rowToSession(row: SessionRow): SessionRecord {
     nextTasks: JSON.parse(row.next_tasks) as string[],
     decisions: JSON.parse(row.decisions) as string[],
     learnings: JSON.parse(row.learnings) as string[],
+    createdAt: row.created_at,
+  };
+}
+
+function rowToAlias(row: EntityAliasRow): EntityAlias {
+  return {
+    id: row.id,
+    canonicalId: row.canonical_id,
+    aliasSystem: row.alias_system,
+    aliasValue: row.alias_value,
+    aliasType: row.alias_type as EntityAlias["aliasType"],
+    confidence: row.confidence as EntityAlias["confidence"],
     createdAt: row.created_at,
   };
 }
@@ -941,6 +973,189 @@ export class HiveDatabase {
     };
     this.insertEntity(entity);
     return id;
+  }
+
+  // ── Entity alias methods ────────────────────────────────────────────────────
+
+  /** Upsert an alias. Returns true if inserted, false if already existed. */
+  upsertAlias(alias: {
+    canonicalId: string;
+    aliasSystem: string;
+    aliasValue: string;
+    aliasType: "external_id" | "email" | "name" | "handle";
+    confidence: "confirmed" | "inferred";
+  }): boolean {
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const result = this.db.prepare(`
+      INSERT OR IGNORE INTO entity_aliases (id, canonical_id, alias_system, alias_value, alias_type, confidence, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, alias.canonicalId, alias.aliasSystem, alias.aliasValue, alias.aliasType, alias.confidence, now);
+    return result.changes > 0;
+  }
+
+  /** Get all aliases for a canonical entity. */
+  getAliases(canonicalId: string): EntityAlias[] {
+    const rows = this.db.prepare(
+      "SELECT * FROM entity_aliases WHERE canonical_id = ?",
+    ).all(canonicalId) as EntityAliasRow[];
+    return rows.map(rowToAlias);
+  }
+
+  /**
+   * Merge superseded entity into primary entity.
+   * Moves synapses, archives superseded, creates aliases.
+   */
+  mergeEntities(
+    primaryId: string,
+    supersededId: string,
+  ): { synapsesMoved: number; aliasesCreated: number } {
+    return this.db.transaction(() => {
+      let synapsesMoved = 0;
+
+      // 1. Move outgoing synapses from superseded → primary
+      const outgoing = this.db.prepare(
+        "SELECT * FROM synapses WHERE source = ?",
+      ).all(supersededId) as SynapseRow[];
+      for (const syn of outgoing) {
+        if (syn.target === primaryId) continue; // skip self-referencing
+        try {
+          this.db.prepare(`
+            INSERT OR IGNORE INTO synapses (id, source, target, axon, weight, metadata, formed_at, last_potentiated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(crypto.randomUUID(), primaryId, syn.target, syn.axon, syn.weight, syn.metadata, syn.formed_at, syn.last_potentiated);
+          synapsesMoved++;
+        } catch { /* duplicate */ }
+      }
+
+      // 2. Move incoming synapses to superseded → primary
+      const incoming = this.db.prepare(
+        "SELECT * FROM synapses WHERE target = ?",
+      ).all(supersededId) as SynapseRow[];
+      for (const syn of incoming) {
+        if (syn.source === primaryId) continue;
+        try {
+          this.db.prepare(`
+            INSERT OR IGNORE INTO synapses (id, source, target, axon, weight, metadata, formed_at, last_potentiated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(crypto.randomUUID(), syn.source, primaryId, syn.axon, syn.weight, syn.metadata, syn.formed_at, syn.last_potentiated);
+          synapsesMoved++;
+        } catch { /* duplicate */ }
+      }
+
+      // 3. Archive superseded entity
+      this.db.prepare(
+        "UPDATE entities SET status = 'archived', superseded_by = ?, updated_at = ? WHERE id = ?",
+      ).run(primaryId, new Date().toISOString(), supersededId);
+
+      // 4. Create aliases from superseded's identifiers
+      const superseded = this.getEntity(supersededId);
+      let aliasesCreated = 0;
+      if (superseded) {
+        const aliasesToCreate: Array<{
+          system: string;
+          value: string;
+          type: "external_id" | "email" | "handle";
+        }> = [];
+
+        if (superseded.source.externalId) {
+          aliasesToCreate.push({
+            system: superseded.source.system,
+            value: superseded.source.externalId,
+            type: "external_id",
+          });
+        }
+        const email = superseded.attributes?.email as string | undefined;
+        if (email) {
+          aliasesToCreate.push({
+            system: superseded.source.system,
+            value: email,
+            type: "email",
+          });
+        }
+        const handle = superseded.attributes?.handle as string | undefined;
+        if (handle) {
+          aliasesToCreate.push({
+            system: superseded.source.system,
+            value: handle,
+            type: "handle",
+          });
+        }
+
+        for (const a of aliasesToCreate) {
+          if (this.upsertAlias({
+            canonicalId: primaryId,
+            aliasSystem: a.system,
+            aliasValue: a.value,
+            aliasType: a.type,
+            confidence: "confirmed",
+          })) {
+            aliasesCreated++;
+          }
+        }
+      }
+
+      return { synapsesMoved, aliasesCreated };
+    })();
+  }
+
+  // ── Person finder methods ──────────────────────────────────────────────────
+
+  /** Find person entities matching by email, excluding a source system. */
+  findPersonsByEmail(email: string, excludeSystem?: string): Entity[] {
+    const rows = excludeSystem
+      ? this.db.prepare(`
+          SELECT * FROM entities
+          WHERE entity_type = 'person'
+            AND JSON_EXTRACT(attributes, '$.email') = ?
+            AND source_system != ?
+            AND status = 'active'
+        `).all(email, excludeSystem) as EntityRow[]
+      : this.db.prepare(`
+          SELECT * FROM entities
+          WHERE entity_type = 'person'
+            AND JSON_EXTRACT(attributes, '$.email') = ?
+            AND status = 'active'
+        `).all(email) as EntityRow[];
+    return rows.map(rowToEntity);
+  }
+
+  /** Find person entities matching by normalized name, excluding a source system. */
+  findPersonsByNormalizedName(name: string, excludeSystem?: string): Entity[] {
+    const rows = excludeSystem
+      ? this.db.prepare(`
+          SELECT * FROM entities
+          WHERE entity_type = 'person'
+            AND LOWER(TRIM(title)) = ?
+            AND source_system != ?
+            AND status = 'active'
+        `).all(name, excludeSystem) as EntityRow[]
+      : this.db.prepare(`
+          SELECT * FROM entities
+          WHERE entity_type = 'person'
+            AND LOWER(TRIM(title)) = ?
+            AND status = 'active'
+        `).all(name) as EntityRow[];
+    return rows.map(rowToEntity);
+  }
+
+  /** Find person entities matching by handle or username attribute, excluding a source system. */
+  findPersonsByHandle(handle: string, excludeSystem?: string): Entity[] {
+    const rows = excludeSystem
+      ? this.db.prepare(`
+          SELECT * FROM entities
+          WHERE entity_type = 'person'
+            AND (JSON_EXTRACT(attributes, '$.handle') = ? OR JSON_EXTRACT(attributes, '$.username') = ?)
+            AND source_system != ?
+            AND status = 'active'
+        `).all(handle, handle, excludeSystem) as EntityRow[]
+      : this.db.prepare(`
+          SELECT * FROM entities
+          WHERE entity_type = 'person'
+            AND (JSON_EXTRACT(attributes, '$.handle') = ? OR JSON_EXTRACT(attributes, '$.username') = ?)
+            AND status = 'active'
+        `).all(handle, handle) as EntityRow[];
+    return rows.map(rowToEntity);
   }
 
   // ── Lifecycle ───────────────────────────────────────────────────────────────

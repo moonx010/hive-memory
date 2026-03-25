@@ -1,6 +1,6 @@
 import type { Database } from "better-sqlite3";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export function createSchema(db: Database): void {
   db.exec(`
@@ -138,5 +138,21 @@ export function createSchema(db: Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_connectors_type        ON connectors(connector_type);
     CREATE INDEX IF NOT EXISTS idx_connectors_status      ON connectors(status);
+
+    -- ── entity_aliases (v2) ─────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS entity_aliases (
+      id              TEXT PRIMARY KEY,
+      canonical_id    TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+      alias_system    TEXT NOT NULL,
+      alias_value     TEXT NOT NULL,
+      alias_type      TEXT NOT NULL CHECK(alias_type IN ('external_id','email','name','handle')),
+      confidence      TEXT NOT NULL DEFAULT 'inferred'
+                      CHECK(confidence IN ('confirmed','inferred')),
+      created_at      TEXT NOT NULL,
+      UNIQUE(alias_system, alias_value)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_entity_aliases_canonical ON entity_aliases(canonical_id);
+    CREATE INDEX IF NOT EXISTS idx_entities_source_ext ON entities(source_system, source_external_id);
   `);
 }

@@ -38,6 +38,7 @@ import { LLMEnrichProvider } from "./enrichment/providers/llm-enrich.js";
 import { DecisionExtractorProvider } from "./enrichment/providers/decision-extractor.js";
 import { createLLMProvider } from "./enrichment/llm/index.js";
 import type { BatchFilter, BatchResult, EnrichmentResult } from "./enrichment/types.js";
+import { EntityResolver } from "./enrichment/entity-resolver.js";
 
 // Re-export for backwards compatibility
 export { validateId } from "./store/io.js";
@@ -184,6 +185,7 @@ export class CortexStore {
   private _team: TeamSync | undefined = undefined;
   private _connectors: ConnectorRegistry;
   private _enrichmentEngine: EnrichmentEngine | null = null;
+  private _entityResolver: EntityResolver | null = null;
 
   constructor(config: CortexConfig) {
     this.dataDir = config.dataDir;
@@ -259,6 +261,14 @@ export class CortexStore {
       }
     }
     return this._enrichmentEngine;
+  }
+
+  /** Lazily initialize the entity resolver. */
+  get entityResolver(): EntityResolver {
+    if (!this._entityResolver) {
+      this._entityResolver = new EntityResolver(this.database);
+    }
+    return this._entityResolver;
   }
 
   async enrichEntity(entityId: string): Promise<EnrichmentResult[]> {
