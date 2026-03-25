@@ -4,6 +4,8 @@ import type { MemoryCategory } from "./types.js";
 import { validateId } from "./store/io.js";
 import { MeetingAgent } from "./meeting/agent.js";
 import { MemorySteward } from "./steward/index.js";
+import { WorkflowAdvisor } from "./advisor/index.js";
+import { PatternAnalyzer } from "./advisor/patterns.js";
 
 interface CliArgs {
   command: string;
@@ -106,6 +108,12 @@ export async function handleCli(
       break;
     case "briefing":
       await handleBriefing(store, initStore, parsed);
+      break;
+    case "analyze":
+      await handleAnalyze(store, initStore);
+      break;
+    case "patterns":
+      await handlePatterns(store, initStore, parsed);
       break;
     default:
       printUsage();
@@ -363,6 +371,30 @@ async function handleBriefing(
   console.log(report.markdownOutput);
 }
 
+async function handleAnalyze(
+  store: CortexStore,
+  initStore: () => Promise<void>,
+): Promise<void> {
+  await initStore();
+  const advisor = new WorkflowAdvisor(store.database);
+  const report = advisor.analyze();
+  console.log(report.markdownOutput);
+}
+
+async function handlePatterns(
+  store: CortexStore,
+  initStore: () => Promise<void>,
+  args: CliArgs,
+): Promise<void> {
+  await initStore();
+  const analyzer = new PatternAnalyzer(store.database);
+  const report = analyzer.analyze({
+    since: args.since,
+    project: args.project,
+  });
+  console.log(report.markdownOutput);
+}
+
 function printUsage(): void {
   console.log(`Usage: hive-memory <command> [options]
 
@@ -377,6 +409,8 @@ Commands:
   meeting   Process a meeting transcript (--title, --output)
   audit     Run memory data quality audit
   briefing  Generate daily/weekly briefing (--type daily|weekly)
+  analyze   Analyze workflow patterns and generate insights
+  patterns  Analyze aggregated working patterns (--since, --project)
 
   hook session-end    Auto-save session (Claude Code hook)
 

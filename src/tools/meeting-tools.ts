@@ -17,8 +17,10 @@ export function registerMeetingTools(
       date: z.string().optional(),
       attendees: z.array(z.string()).optional(),
       calendarEventId: z.string().optional(),
+      slackWebhook: z.string().optional(),
+      notionParentPageId: z.string().optional(),
     },
-    async ({ transcriptPath, title, date, attendees, calendarEventId }) => {
+    async ({ transcriptPath, title, date, attendees, calendarEventId, slackWebhook, notionParentPageId }) => {
       if (!existsSync(transcriptPath as string)) {
         throw new Error(`Transcript file not found: ${transcriptPath}`);
       }
@@ -34,6 +36,8 @@ export function registerMeetingTools(
         date: date as string | undefined,
         attendees: attendees as string[] | undefined,
         calendarEventId: calendarEventId as string | undefined,
+        slackWebhook: slackWebhook as string | undefined,
+        notionParentPageId: notionParentPageId as string | undefined,
       });
 
       return {
@@ -46,6 +50,8 @@ export function registerMeetingTools(
               decisionsCreated: result.decisionsCreated,
               actionsCreated: result.actionsCreated,
               markdown: result.markdownOutput,
+              slackPosted: result.slackPosted,
+              notionPageUrl: result.notionPageUrl,
             }),
           },
         ],
