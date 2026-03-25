@@ -319,6 +319,12 @@ export class CalendarConnector implements ConnectorPlugin {
     }
   }
 
+  async *rollbackSync(window: { since: string; until: string }): AsyncGenerator<RawDocument> {
+    this._lastSyncStart = new Date().toISOString();
+    this._syncedDrafts = [];
+    yield* this.fetchEvents({ updatedMin: window.since });
+  }
+
   private async *fetchEvents(params: {
     timeMin?: string;
     updatedMin?: string;

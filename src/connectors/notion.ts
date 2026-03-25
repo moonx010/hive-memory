@@ -9,6 +9,7 @@
  */
 
 import type { ConnectorPlugin, RawDocument, EntityDraft } from "./types.js";
+import type { CheckpointManager } from "./checkpoint.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -267,9 +268,9 @@ export class NotionConnector implements ConnectorPlugin {
     return this.cursor;
   }
 
-  async *fullSync(): AsyncGenerator<RawDocument> {
+  async *fullSync(checkpoint?: CheckpointManager): AsyncGenerator<RawDocument> {
     this.cursor = new Date().toISOString();
-    yield* this._searchAll(undefined);
+    yield* this._searchAll(undefined, checkpoint);
   }
 
   async *incrementalSync(cursor?: string): AsyncGenerator<RawDocument> {
@@ -278,10 +279,15 @@ export class NotionConnector implements ConnectorPlugin {
     yield* this._searchAll(since);
   }
 
-  private async *_searchAll(since?: string): AsyncGenerator<RawDocument> {
+  async *rollbackSync(window: { since: string; until: string }): AsyncGenerator<RawDocument> {
+    this.cursor = new Date().toISOString();
+    yield* this._searchAll(window.since);
+  }
+
+  private async *_searchAll(since?: string, checkpoint?: CheckpointManager): AsyncGenerator<RawDocument> {
     if (this.databases.length > 0) {
       for (const dbId of this.databases) {
-        yield* this._queryDatabase(dbId, since);
+        yield* this._queryDatabase(dbId, since, checkpoint);
       }
     } else if (this.pages.length > 0) {
       for (const pageId of this.pages) {
@@ -289,12 +295,17 @@ export class NotionConnector implements ConnectorPlugin {
       }
     } else {
       // Search all accessible pages
-      yield* this._searchPages(since);
+      yield* this._searchPages(since, checkpoint);
     }
   }
 
-  private async *_searchPages(since?: string): AsyncGenerator<RawDocument> {
-    let nextCursor: string | undefined;
+  private async *_searchPages(since?: string, checkpoint?: CheckpointManager): AsyncGenerator<RawDocument> {
+    const streamId = "notion:search:pages";
+
+    // Skip if stream was completed in a previous run
+    if (checkpoint?.isStreamComplete(streamId)) return;
+
+    let nextCursor: string | undefined = checkpoint?.getStreamPageToken(streamId);
 
     do {
       await sleep(REQUEST_DELAY_MS);
@@ -324,14 +335,30 @@ export class NotionConnector implements ConnectorPlugin {
       }
 
       nextCursor = data.next_cursor ?? undefined;
+
+      // Checkpoint after each page
+      if (checkpoint) {
+        const pagesProcessed = (checkpoint.getProgress()?.streams ?? 0) + 1;
+        checkpoint.updateStream(streamId, { pageToken: nextCursor, pagesProcessed });
+        checkpoint.flush();
+      }
     } while (nextCursor);
+
+    checkpoint?.updateStream(streamId, { complete: true });
+    checkpoint?.flush();
   }
 
   private async *_queryDatabase(
     databaseId: string,
     since?: string,
+    checkpoint?: CheckpointManager,
   ): AsyncGenerator<RawDocument> {
-    let nextCursor: string | undefined;
+    const streamId = `notion:db:${databaseId}`;
+
+    // Skip if stream was completed in a previous run
+    if (checkpoint?.isStreamComplete(streamId)) return;
+
+    let nextCursor: string | undefined = checkpoint?.getStreamPageToken(streamId);
 
     do {
       await sleep(REQUEST_DELAY_MS);
@@ -359,7 +386,17 @@ export class NotionConnector implements ConnectorPlugin {
       }
 
       nextCursor = data.next_cursor ?? undefined;
+
+      // Checkpoint after each page
+      if (checkpoint) {
+        const pagesProcessed = (checkpoint.getProgress()?.streams ?? 0) + 1;
+        checkpoint.updateStream(streamId, { pageToken: nextCursor, pagesProcessed });
+        checkpoint.flush();
+      }
     } while (nextCursor);
+
+    checkpoint?.updateStream(streamId, { complete: true });
+    checkpoint?.flush();
   }
 
   private async *_fetchPage(pageId: string): AsyncGenerator<RawDocument> {

@@ -29,15 +29,17 @@ import { migrateAllProjects, scanProjectReferences, syncReferences } from "./sto
 import { HiveDatabase } from "./db/database.js";
 import type { ListEntitiesOptions, SearchEntitiesOptions } from "./db/database.js";
 import type { Entity } from "./types.js";
-import type { ConnectorRegistry } from "./connectors/types.js";
+import type { ConnectorRegistry, RawDocument } from "./connectors/types.js";
 import { createConnectorRegistry } from "./connectors/types.js";
+import { ConnectorStateMachine } from "./connectors/state-machine.js";
+import { CheckpointManager } from "./connectors/checkpoint.js";
 import type { TeamSync } from "./team/git-sync.js";
 import { EnrichmentEngine } from "./enrichment/engine.js";
 import { ClassifyProvider } from "./enrichment/providers/classify.js";
 import { LLMEnrichProvider } from "./enrichment/providers/llm-enrich.js";
 import { DecisionExtractorProvider } from "./enrichment/providers/decision-extractor.js";
 import { createLLMProvider } from "./enrichment/llm/index.js";
-import type { BatchFilter, BatchResult, EnrichmentResult } from "./enrichment/types.js";
+import type { BatchFilter, BatchResult, EnrichmentResult, EnrichmentStage } from "./enrichment/types.js";
 import { EntityResolver } from "./enrichment/entity-resolver.js";
 
 // Re-export for backwards compatibility
@@ -271,8 +273,11 @@ export class CortexStore {
     return this._entityResolver;
   }
 
-  async enrichEntity(entityId: string): Promise<EnrichmentResult[]> {
-    return this.enrichmentEngine.enrichEntity(entityId);
+  async enrichEntity(
+    entityId: string,
+    opts?: { force?: boolean; stage?: EnrichmentStage },
+  ): Promise<EnrichmentResult[]> {
+    return this.enrichmentEngine.enrichEntity(entityId, opts);
   }
 
   async enrichBatch(opts: BatchFilter = {}): Promise<BatchResult> {
@@ -478,6 +483,8 @@ export class CortexStore {
   async syncConnector(connectorId: string, full = false): Promise<{
     added: number;
     updated: number;
+    skipped: number;
+    archived: number;
     errors: number;
     lastError?: string;
   }> {
@@ -490,26 +497,88 @@ export class CortexStore {
     }
 
     const db = this.database;
-    let added = 0;
-    let updated = 0;
-    let errors = 0;
+    const sm = new ConnectorStateMachine(db);
+
+    // Determine execution phase and mark connector as syncing
+    const phase = sm.getExecutionPhase(connectorId, full);
+    sm.startSync(connectorId, phase);
+
+    // Checkpoint: only for initial phase syncs
+    let cpManager: CheckpointManager | undefined;
+    let resumedCounts = { added: 0, updated: 0, skipped: 0, errors: 0 };
+    if (phase === "initial") {
+      cpManager = new CheckpointManager(connectorId);
+      const existingCp = cpManager.load();
+      if (existingCp) {
+        resumedCounts = existingCp.counts;
+        console.error(`[sync:${connectorId}] Resuming from checkpoint (${existingCp.counts.added + existingCp.counts.updated} entities processed)`);
+      } else {
+        cpManager.create();
+      }
+    }
+
+    let added = resumedCounts.added;
+    let updated = resumedCounts.updated;
+    let skipped = resumedCounts.skipped;
+    let archived = 0;
+    let errors = resumedCounts.errors;
     let lastError: string | undefined;
     const entityMap = new Map<string, string>(); // externalId → entityId
 
-    // Mark connector as syncing
-    db.upsertConnector({
-      id: connectorId,
-      connectorType: connector.id,
-      config: {},
-      status: "syncing",
-    });
+    // Select generator based on phase
+    const cursor = phase === "initial" ? undefined : connector.getCursor();
+    let gen: ReturnType<typeof connector.incrementalSync>;
 
-    const cursor = full ? undefined : connector.getCursor();
-    const gen = full ? connector.fullSync() : connector.incrementalSync(cursor);
+    switch (phase) {
+      case "initial":
+        // Pass checkpoint to connectors that support it (optional parameter)
+        gen = (connector.fullSync as (cp?: CheckpointManager) => AsyncGenerator<RawDocument>)(cpManager);
+        break;
+      case "rollback":
+        if (connector.rollbackSync) {
+          const rollbackWindow = sm.getRollbackWindow();
+          gen = connector.rollbackSync(rollbackWindow);
+        } else {
+          gen = connector.incrementalSync(cursor);
+        }
+        break;
+      case "incremental":
+      default:
+        gen = connector.incrementalSync(cursor);
+        break;
+    }
+
+    // Build sync metadata object stamped on all entities during this sync
+    const syncMeta = {
+      _lastSyncedAt: new Date().toISOString(),
+      _syncCursor: cursor ?? null,
+      _syncPhase: phase,
+      _syncConnector: connectorId,
+      _sourceDeleted: false,
+    };
 
     try {
       for await (const doc of gen) {
         try {
+          // Check for source-reported deletion
+          if (doc._deleted) {
+            const existing = db.getByExternalId(doc.source, doc.externalId);
+            if (existing) {
+              db.updateEntityAttributes(existing.id, {
+                ...syncMeta,
+                _sourceDeleted: true,
+              });
+              if (existing.status !== "archived") {
+                db.updateEntity(existing.id, {
+                  status: "archived",
+                  updatedAt: new Date().toISOString(),
+                });
+                archived++;
+              }
+            }
+            continue;
+          }
+
           const drafts = connector.transform(doc);
 
           for (const draft of drafts) {
@@ -518,16 +587,24 @@ export class CortexStore {
               const draftStatus = draft.status ?? "active";
 
               if (existing) {
-                db.updateEntity(existing.id, {
+                const result = db.updateEntity(existing.id, {
                   title: draft.title,
                   content: draft.content,
                   tags: draft.tags,
-                  attributes: draft.attributes,
+                  attributes: { ...draft.attributes, ...syncMeta },
                   status: draftStatus as Entity["status"],
                   updatedAt: new Date().toISOString(),
                 });
                 entityMap.set(draft.source.externalId, existing.id);
-                updated++;
+                if (result.changed) {
+                  updated++;
+                  cpManager?.updateCounts({ updated: 1 });
+                } else {
+                  // Content unchanged — still stamp sync metadata
+                  db.updateEntityAttributes(existing.id, syncMeta);
+                  skipped++;
+                  cpManager?.updateCounts({ skipped: 1 });
+                }
               } else {
                 const now = new Date().toISOString();
                 const keywords = this._extractKeywords(draft.content + " " + (draft.title ?? ""));
@@ -540,7 +617,7 @@ export class CortexStore {
                   content: draft.content,
                   tags: draft.tags,
                   keywords,
-                  attributes: draft.attributes,
+                  attributes: { ...draft.attributes, ...syncMeta },
                   source: draft.source,
                   author: draft.author,
                   visibility: "personal",
@@ -553,10 +630,12 @@ export class CortexStore {
                 db.insertEntity(entity);
                 entityMap.set(draft.source.externalId, entity.id);
                 added++;
+                cpManager?.updateCounts({ added: 1 });
               }
             } catch (err) {
               errors++;
               lastError = err instanceof Error ? err.message : String(err);
+              cpManager?.updateCounts({ errors: 1 });
               console.error(`[sync:${connectorId}] Failed to upsert entity ${draft.source.externalId}: ${lastError}`);
             }
           }
@@ -568,17 +647,15 @@ export class CortexStore {
       }
     } catch (err) {
       // Generator-level error (e.g., API auth failure, network error)
+      // Checkpoint is preserved on error so next run can resume
       lastError = err instanceof Error ? err.message : String(err);
       console.error(`[sync:${connectorId}] Sync stream error: ${lastError}`);
 
       // Save partial progress before re-throwing fatal errors
       const now = new Date().toISOString();
-      db.upsertConnector({
-        id: connectorId,
-        connectorType: connector.id,
-        config: {},
+      const finalErrors = errors + 1;
+      sm.completeSync(connectorId, { added, updated, skipped, errors: finalErrors, lastError }, {
         lastSync: now,
-        status: "error",
         syncCursor: connector.getCursor(),
       });
 
@@ -591,7 +668,7 @@ export class CortexStore {
         }
       }
 
-      return { added, updated, errors: errors + 1, lastError };
+      return { added, updated, skipped, archived, errors: finalErrors, lastError };
     }
 
     // Post-sync hook for connector-specific synapse creation
@@ -599,18 +676,17 @@ export class CortexStore {
       connector.postSync(db, entityMap);
     }
 
-    // Update connector state
+    // Delete checkpoint on successful completion
+    cpManager?.delete();
+
+    // Complete sync via state machine (handles phase transitions + history)
     const now = new Date().toISOString();
-    db.upsertConnector({
-      id: connectorId,
-      connectorType: connector.id,
-      config: {},
+    sm.completeSync(connectorId, { added, updated, skipped, errors, lastError }, {
       lastSync: now,
-      status: errors > 0 ? "error" : "idle",
       syncCursor: connector.getCursor(),
     });
 
-    return { added, updated, errors, lastError };
+    return { added, updated, skipped, archived, errors, lastError };
   }
 
   /** Simple keyword extraction (reuses hive-index logic) */

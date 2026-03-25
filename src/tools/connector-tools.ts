@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { HiveDatabase } from "../db/database.js";
+import { CheckpointManager } from "../connectors/checkpoint.js";
 import type { SafeToolFn } from "./index.js";
 
 // ── Helpers ──
@@ -50,7 +51,8 @@ export function registerConnectorTools(safeTool: SafeToolFn, db: HiveDatabase) {
       if (!connector) {
         lines.push(`Connector "${connectorId}" not found.`);
       } else {
-        lines.push(`Status: ${connector.status}  |  Last sync: ${connector.lastSync ? relativeTime(connector.lastSync) : "never"}`);
+        const phase = connector.syncPhase ?? "initial";
+        lines.push(`Status: ${connector.status}  |  Phase: ${phase}  |  Last sync: ${connector.lastSync ? relativeTime(connector.lastSync) : "never"}`);
       }
 
       return { content: [{ type: "text" as const, text: lines.join("\n") }] };
@@ -92,9 +94,22 @@ export function registerConnectorTools(safeTool: SafeToolFn, db: HiveDatabase) {
         const icon = statusIcons[c.status] ?? "[ ]";
         const lastSyncStr = c.lastSync ? relativeTime(c.lastSync) : "never";
         const entryCount = db.countEntities({ namespace: c.id });
+        const phase = c.syncPhase ?? "initial";
 
+        const cursorStr = c.syncCursor ? `  |  Cursor: ${c.syncCursor}` : "";
         lines.push(`${icon} ${c.id}  (${c.connectorType})`);
-        lines.push(`    Status: ${c.status}  |  Last sync: ${lastSyncStr}  |  Entries: ${entryCount}`);
+        lines.push(`    Status: ${c.status}  |  Phase: ${phase}  |  Last sync: ${lastSyncStr}  |  Entries: ${entryCount}${cursorStr}`);
+
+        // Show checkpoint progress if a resumable checkpoint exists
+        const cpManager = new CheckpointManager(c.id);
+        const cp = cpManager.load();
+        if (cp) {
+          const progress = cpManager.getProgress();
+          if (progress) {
+            lines.push(`    [Resumable] Checkpoint: ${progress.totalProcessed} processed  |  ${progress.streams} stream(s)  |  Last: ${relativeTime(progress.lastCheckpoint)}`);
+          }
+        }
+
         lines.push(``);
       }
 

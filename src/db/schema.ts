@@ -1,6 +1,6 @@
 import type { Database } from "better-sqlite3";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export function createSchema(db: Database): void {
   db.exec(`
@@ -27,7 +27,8 @@ export function createSchema(db: Database): void {
       updated_at        TEXT NOT NULL,
       expires_at        TEXT,
       status            TEXT NOT NULL DEFAULT 'active',
-      superseded_by     TEXT
+      superseded_by     TEXT,
+      content_hash      TEXT
     );
 
     -- ── FTS5 virtual table for full-text search ────────────────────────────────
@@ -112,7 +113,9 @@ export function createSchema(db: Database): void {
       config         TEXT NOT NULL DEFAULT '{}',
       last_sync      TEXT,
       status         TEXT DEFAULT 'idle',
-      sync_cursor    TEXT
+      sync_cursor    TEXT,
+      sync_phase     TEXT NOT NULL DEFAULT 'initial',
+      sync_history   TEXT NOT NULL DEFAULT '[]'
     );
 
     -- ── indexes ───────────────────────────────────────────────────────────────
@@ -155,4 +158,23 @@ export function createSchema(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_entity_aliases_canonical ON entity_aliases(canonical_id);
     CREATE INDEX IF NOT EXISTS idx_entities_source_ext ON entities(source_system, source_external_id);
   `);
+
+  // v3 migration: add content_hash column to existing databases
+  try {
+    db.exec(`ALTER TABLE entities ADD COLUMN content_hash TEXT`);
+  } catch {
+    // Column already exists (fresh DB or already migrated) — safe to ignore
+  }
+
+  // v3 migration: add sync_phase and sync_history columns to connectors table
+  try {
+    db.exec(`ALTER TABLE connectors ADD COLUMN sync_phase TEXT NOT NULL DEFAULT 'initial'`);
+  } catch {
+    // Column already exists (fresh DB or already migrated) — safe to ignore
+  }
+  try {
+    db.exec(`ALTER TABLE connectors ADD COLUMN sync_history TEXT NOT NULL DEFAULT '[]'`);
+  } catch {
+    // Column already exists (fresh DB or already migrated) — safe to ignore
+  }
 }

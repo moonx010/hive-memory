@@ -7,8 +7,10 @@ import type {
   EnrichmentContext,
   EnrichmentProvider,
   EnrichmentResult,
+  EnrichmentStage,
   LLMProvider,
 } from "./types.js";
+import { STAGE_ORDER, STAGE_TIMESTAMP_KEYS } from "./types.js";
 
 export class EnrichmentEngine {
   private providers: EnrichmentProvider[] = [];
@@ -27,9 +29,23 @@ export class EnrichmentEngine {
     return this.providers;
   }
 
-  async enrichEntity(entityId: string): Promise<EnrichmentResult[]> {
+  async enrichEntity(
+    entityId: string,
+    opts?: { force?: boolean; stage?: EnrichmentStage },
+  ): Promise<EnrichmentResult[]> {
     const entity = this.db.getEntity(entityId);
     if (!entity) throw new Error(`Entity not found: ${entityId}`);
+
+    // Skip re-enrichment if content hasn't changed since last enrichment
+    // (only when no specific stage is requested and not forced)
+    if (
+      !opts?.force &&
+      !opts?.stage &&
+      entity.contentHash !== undefined &&
+      entity.contentHash === entity.attributes._enrichedContentHash
+    ) {
+      return [];
+    }
 
     const ctx: EnrichmentContext = {
       db: this.db,
@@ -45,6 +61,9 @@ export class EnrichmentEngine {
     const enrichedBy: string[] = [];
 
     for (const provider of this.providers) {
+      // Stage filter: skip providers not in requested stage
+      if (opts?.stage && provider.stage !== opts.stage) continue;
+
       const applicable = provider.applicableTo as readonly string[];
       if (!applicable.includes("*") && !applicable.includes(entity.entityType)) {
         continue;
@@ -73,13 +92,32 @@ export class EnrichmentEngine {
     }
 
     if (enrichedBy.length > 0) {
-      this.db.updateEntityAttributes(entityId, {
-        _enrichedAt: new Date().toISOString(),
+      const now = new Date().toISOString();
+      const attrs: Record<string, unknown> = {
+        _enrichedAt: now,
         _enrichedBy: enrichedBy,
-      });
+        _enrichedContentHash: entity.contentHash,
+      };
+
+      // Stamp per-stage completion timestamps
+      if (opts?.stage) {
+        attrs[STAGE_TIMESTAMP_KEYS[opts.stage]] = now;
+      } else {
+        // All stages ran — stamp applicable stage timestamps
+        const stagesRun = new Set(enrichedBy.map((id) => this.getProviderStage(id)));
+        for (const stage of stagesRun) {
+          if (stage) attrs[STAGE_TIMESTAMP_KEYS[stage]] = now;
+        }
+      }
+
+      this.db.updateEntityAttributes(entityId, attrs);
     }
 
     return results;
+  }
+
+  private getProviderStage(providerId: string): EnrichmentStage | undefined {
+    return this.providers.find((p) => p.id === providerId)?.stage;
   }
 
   async enrichBatch(filter: BatchFilter = {}): Promise<BatchResult> {
@@ -87,17 +125,27 @@ export class EnrichmentEngine {
     const batchLimit = filter.limit ?? 100;
     const chunkSize = 50;
 
+    // Resolve resumeFrom to a concrete stage filter if provided
+    const resumeFromIndex = filter.resumeFrom
+      ? STAGE_ORDER.indexOf(filter.resumeFrom)
+      : -1;
+
     let processed = 0;
     let enriched = 0;
     let errors = 0;
     let offset = 0;
+
+    // When stage is specified, don't require unenrichedOnly
+    const effectiveUnenrichedOnly = filter.stage
+      ? (filter.unenrichedOnly ?? false)
+      : filter.unenrichedOnly;
 
     while (processed < batchLimit) {
       const fetchLimit = Math.min(chunkSize, batchLimit - processed);
       const entities = this.db.listEntities({
         entityType: filter.entityType,
         since: filter.since,
-        unenrichedOnly: filter.unenrichedOnly,
+        unenrichedOnly: effectiveUnenrichedOnly,
         limit: fetchLimit,
         offset,
       });
@@ -107,7 +155,20 @@ export class EnrichmentEngine {
       for (const entity of entities) {
         processed++;
         try {
-          const results = await this.enrichEntity(entity.id);
+          // When resumeFrom is set, skip entities already at or past the resume stage
+          if (resumeFromIndex >= 0) {
+            const stageKeys = STAGE_ORDER.slice(0, resumeFromIndex);
+            const alreadyCompleted = stageKeys.some(
+              (s) => entity.attributes?.[STAGE_TIMESTAMP_KEYS[s]],
+            );
+            if (alreadyCompleted) {
+              continue;
+            }
+          }
+
+          const results = await this.enrichEntity(entity.id, {
+            stage: filter.stage,
+          });
           if (results.length > 0) {
             this.db.updateEntityAttributes(entity.id, { _batchId: batchId });
             enriched++;
@@ -116,15 +177,16 @@ export class EnrichmentEngine {
           errors++;
         }
         if (processed % 50 === 0) {
+          const stageLabel = filter.stage ? ` (stage: ${filter.stage})` : "";
           console.error(
-            `[enrichment] processed ${processed} entities`,
+            `[enrichment] processed ${processed} entities${stageLabel}`,
           );
         }
       }
 
       // When unenrichedOnly, the result set shrinks as entities get _enrichedAt stamped,
       // so always query from offset 0. Otherwise, advance the offset normally.
-      if (!filter.unenrichedOnly) {
+      if (!effectiveUnenrichedOnly) {
         offset += entities.length;
       }
     }

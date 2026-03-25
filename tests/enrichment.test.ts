@@ -364,6 +364,83 @@ describe("HiveDatabase enrichment methods", () => {
   });
 });
 
+describe("EnrichmentEngine content hash dedup", () => {
+  let db: HiveDatabase;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "hive-enrich-hash-test-"));
+    db = new HiveDatabase(join(tmpDir, "test.db"));
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("skips re-enrichment when content_hash matches _enrichedContentHash", async () => {
+    const engine = new EnrichmentEngine(db);
+    const enrichSpy = vi.fn().mockResolvedValue({ tags: ["tagged"] });
+    const provider: EnrichmentProvider = {
+      id: "spy",
+      name: "Spy",
+      applicableTo: ["*"] as ["*"],
+      priority: 100,
+      shouldEnrich: () => true,
+      enrich: enrichSpy,
+    };
+    engine.register(provider);
+
+    const entity = createTestEntity(db, {
+      content: "Content that will be enriched once",
+    });
+
+    // First enrichment — should run
+    await engine.enrichEntity(entity.id);
+    expect(enrichSpy).toHaveBeenCalledTimes(1);
+
+    // Stamp _enrichedContentHash to match current contentHash
+    const afterFirst = db.getEntity(entity.id)!;
+    expect(afterFirst.attributes._enrichedContentHash).toBe(afterFirst.contentHash);
+
+    // Second enrichment with same content — should be skipped
+    await engine.enrichEntity(entity.id);
+    expect(enrichSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-enriches when content changes (hash mismatch)", async () => {
+    const engine = new EnrichmentEngine(db);
+    const enrichSpy = vi.fn().mockResolvedValue({ tags: ["tagged"] });
+    const provider: EnrichmentProvider = {
+      id: "spy2",
+      name: "Spy2",
+      applicableTo: ["*"] as ["*"],
+      priority: 100,
+      shouldEnrich: () => true,
+      enrich: enrichSpy,
+    };
+    engine.register(provider);
+
+    const entity = createTestEntity(db, {
+      content: "Original content for enrichment test",
+    });
+
+    // First enrichment
+    await engine.enrichEntity(entity.id);
+    expect(enrichSpy).toHaveBeenCalledTimes(1);
+
+    // Change content
+    db.updateEntity(entity.id, {
+      content: "Updated content that is different from the original",
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Second enrichment — should run because hash changed
+    await engine.enrichEntity(entity.id);
+    expect(enrichSpy).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("LLMEnrichProvider", () => {
   it("sets attributes.summary from mocked llm.extract response", async () => {
     const provider = new LLMEnrichProvider();

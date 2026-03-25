@@ -19,6 +19,8 @@ interface CliArgs {
   content?: string;
   since?: string;
   type?: string;
+  stage?: string;
+  resumeFrom?: string;
 }
 
 export function parseCliArgs(args: string[]): CliArgs {
@@ -54,6 +56,12 @@ export function parseCliArgs(args: string[]): CliArgs {
         break;
       case "--type":
         result.type = args[++i];
+        break;
+      case "--stage":
+        result.stage = args[++i];
+        break;
+      case "--resume-from":
+        result.resumeFrom = args[++i];
         break;
       case "--no-embed":
         // Legacy flag — ignored (embeddings removed)
@@ -302,16 +310,21 @@ async function handleEnrich(
   args: CliArgs,
 ): Promise<void> {
   await initStore();
+  const stage = args.stage as import("./enrichment/types.js").EnrichmentStage | undefined;
+  const resumeFrom = args.resumeFrom as import("./enrichment/types.js").EnrichmentStage | undefined;
   const result = await store.enrichBatch({
     since: args.since,
     entityType: args.type
       ? (args.type.split(",") as import("./types.js").EntityType[])
       : undefined,
     limit: args.limit ?? 100,
-    unenrichedOnly: true,
+    unenrichedOnly: !stage,
+    stage,
+    resumeFrom,
   });
+  const stageSuffix = stage ? ` (stage: ${stage})` : "";
   console.log(
-    `Enriched ${result.enriched}/${result.processed} entities (batchId: ${result.batchId})`,
+    `Enriched ${result.enriched}/${result.processed} entities${stageSuffix} (batchId: ${result.batchId})`,
   );
   if (result.errors > 0) {
     console.log(`Errors: ${result.errors}`);

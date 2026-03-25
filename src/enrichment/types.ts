@@ -56,12 +56,27 @@ export interface LLMProvider {
   extract<T>(prompt: string, schema: Record<string, unknown>): Promise<T>;
 }
 
+export type EnrichmentStage = "classify" | "extract" | "stitch" | "resolve";
+
+/** Stage ordering — lower index runs first. */
+export const STAGE_ORDER: EnrichmentStage[] = ["classify", "extract", "stitch", "resolve"];
+
+/** Per-stage timestamp attribute keys. */
+export const STAGE_TIMESTAMP_KEYS: Record<EnrichmentStage, string> = {
+  classify: "_classifiedAt",
+  extract: "_extractedAt",
+  stitch: "_stitchedAt",
+  resolve: "_resolvedAt",
+};
+
 export interface EnrichmentProvider {
   readonly id: string;
   readonly name: string;
   readonly applicableTo: EntityType[] | ["*"];
   /** Lower number runs first. ClassifyProvider=100, LLMEnrichProvider=200, TopicStitch=300 */
   readonly priority: number;
+  /** Which pipeline stage this provider belongs to. */
+  readonly stage: EnrichmentStage;
   shouldEnrich(entity: Entity): boolean;
   enrich(entity: Entity, ctx: EnrichmentContext): Promise<EnrichmentResult>;
 }
@@ -71,6 +86,10 @@ export interface BatchFilter {
   since?: string;
   unenrichedOnly?: boolean;
   limit?: number;
+  /** Run only providers in this stage. */
+  stage?: EnrichmentStage;
+  /** Resume from this stage, skipping providers in earlier stages. */
+  resumeFrom?: EnrichmentStage;
 }
 
 export interface BatchResult {

@@ -4,6 +4,7 @@ import type {
   EnrichmentContext,
   EnrichmentProvider,
   EnrichmentResult,
+  EnrichmentStage,
   LLMProvider,
 } from "../types.js";
 import type { EntityDraft, SynapseDraft } from "../types.js";
@@ -126,6 +127,7 @@ export class DecisionExtractorProvider implements EnrichmentProvider {
     "meeting",
   ];
   readonly priority = 50;
+  readonly stage: EnrichmentStage = "extract";
 
   shouldEnrich(entity: Entity): boolean {
     if (entity.attributes?._decisionsExtracted) return false;

@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { CortexStore } from "../store.js";
 import type { SafeToolFn } from "./index.js";
 import type { EntityType } from "../types.js";
+import type { EnrichmentStage } from "../enrichment/types.js";
 
 export function registerContextTools(
   safeTool: SafeToolFn,
@@ -16,16 +17,19 @@ export function registerContextTools(
       entityType: z.array(z.string()).optional(),
       since: z.string().optional(),
       limit: z.number().int().positive().max(500).optional(),
+      stage: z.enum(["classify", "extract", "stitch", "resolve"]).optional(),
     },
-    async ({ scope, entityId, entityType, since, limit }) => {
+    async ({ scope, entityId, entityType, since, limit, stage }) => {
+      const stageValue = stage as EnrichmentStage | undefined;
+
       if (scope === "entity") {
         if (!entityId) throw new Error("entityId required for scope=entity");
-        const results = await store.enrichEntity(entityId as string);
+        const results = await store.enrichEntity(entityId as string, { stage: stageValue });
         return {
           content: [
             {
               type: "text" as const,
-              text: JSON.stringify({ enriched: results.length }),
+              text: JSON.stringify({ enriched: results.length, stage: stageValue }),
             },
           ],
         };
@@ -35,7 +39,8 @@ export function registerContextTools(
         entityType: entityType as EntityType[] | undefined,
         since: since as string | undefined,
         limit: (limit as number | undefined) ?? 100,
-        unenrichedOnly: true,
+        unenrichedOnly: !stageValue, // When stage is specified, don't filter by unenriched
+        stage: stageValue,
       });
 
       // Include a sample of recently enriched entities
@@ -48,7 +53,7 @@ export function registerContextTools(
         content: [
           {
             type: "text" as const,
-            text: JSON.stringify({ ...result, sample }),
+            text: JSON.stringify({ ...result, stage: stageValue, sample }),
           },
         ],
       };

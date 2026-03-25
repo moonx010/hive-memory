@@ -179,6 +179,16 @@ export class SlackConnector implements ConnectorPlugin {
     yield* this._syncChannels(oldest);
   }
 
+  async *rollbackSync(window: { since: string; until: string }): AsyncGenerator<RawDocument> {
+    // Re-fetch messages from the window period. Member syncing is skipped
+    // (members don't change frequently during a 6-hour window).
+    this.cursor = new Date().toISOString();
+    const oldest = (new Date(window.since).getTime() / 1000).toString();
+    for (const channelId of this.channels) {
+      yield* this._syncChannel(channelId, oldest);
+    }
+  }
+
   private async *_syncChannels(oldest?: string): AsyncGenerator<RawDocument> {
     this.cursor = new Date().toISOString();
 

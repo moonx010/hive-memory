@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { HiveDatabase } from "../src/db/database.js";
+import { HiveDatabase, computeContentHash } from "../src/db/database.js";
 import { EntityResolver, levenshtein } from "../src/enrichment/entity-resolver.js";
 import type { Entity } from "../src/types.js";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -478,5 +478,78 @@ describe("levenshtein", () => {
     expect(levenshtein("", "abc")).toBe(3);
     expect(levenshtein("abc", "")).toBe(3);
     expect(levenshtein("", "")).toBe(0);
+  });
+});
+
+describe("content hash dedup — HiveDatabase", () => {
+  let db: HiveDatabase;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "hive-hash-test-"));
+    db = new HiveDatabase(join(tmpDir, "test.db"));
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeEntity(overrides: Partial<Entity> = {}): Entity {
+    const now = new Date().toISOString();
+    return {
+      id: randomUUID(),
+      entityType: "memory",
+      namespace: "local",
+      content: "Base content for hash tests",
+      tags: [],
+      keywords: [],
+      attributes: {},
+      source: { system: "test" },
+      visibility: "personal",
+      domain: "code",
+      confidence: "confirmed",
+      createdAt: now,
+      updatedAt: now,
+      status: "active",
+      ...overrides,
+    };
+  }
+
+  it("insertEntity computes content_hash automatically", () => {
+    const entity = makeEntity({ content: "Hello world" });
+    db.insertEntity(entity);
+
+    const stored = db.getEntity(entity.id)!;
+    expect(stored.contentHash).toBeDefined();
+    expect(stored.contentHash).toBe(computeContentHash("Hello world"));
+    expect(stored.contentHash).toHaveLength(16);
+  });
+
+  it("updateEntity returns { changed: false } when content is unchanged", () => {
+    const entity = makeEntity({ content: "Stable content" });
+    db.insertEntity(entity);
+
+    const result = db.updateEntity(entity.id, {
+      content: "Stable content",
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(result.changed).toBe(false);
+  });
+
+  it("updateEntity returns { changed: true } when content changes", () => {
+    const entity = makeEntity({ content: "Original content" });
+    db.insertEntity(entity);
+
+    const result = db.updateEntity(entity.id, {
+      content: "Different content now",
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(result.changed).toBe(true);
+
+    const stored = db.getEntity(entity.id)!;
+    expect(stored.contentHash).toBe(computeContentHash("Different content now"));
   });
 });
