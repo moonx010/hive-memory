@@ -1,0 +1,442 @@
+[
+  {
+    "id": "sample-001",
+    "entityContent": "function parseSlackMessage(raw: string): SlackMessage { return JSON.parse(raw); }",
+    "entityType": "snippet",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": "code"
+  },
+  {
+    "id": "sample-002",
+    "entityContent": "import { readFileSync } from 'node:fs'; import path from 'node:path';",
+    "entityType": "snippet",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": "code"
+  },
+  {
+    "id": "sample-003",
+    "entityContent": "const fetchUser = async (id: string) => { const res = await db.get(id); return res; };",
+    "entityType": "snippet",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": "code"
+  },
+  {
+    "id": "sample-004",
+    "entityContent": "interface UserProfile { id: string; name: string; email: string; role: 'admin' | 'member'; }",
+    "entityType": "snippet",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": "code"
+  },
+  {
+    "id": "sample-005",
+    "entityContent": "export class DatabaseAdapter { constructor(private db: SQLiteDB) {} query(sql: string) { return this.db.prepare(sql).all(); } }",
+    "entityType": "snippet",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": "code"
+  },
+  {
+    "id": "sample-006",
+    "entityContent": "export default function HomePage() { return <div className='container'><h1>Welcome</h1></div>; }",
+    "entityType": "snippet",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": "code"
+  },
+  {
+    "id": "sample-007",
+    "entityContent": "type ApiResponse<T> = { data: T; status: number; message: string; };",
+    "entityType": "snippet",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": "code"
+  },
+  {
+    "id": "sample-008",
+    "entityContent": "const handler = async (req: Request, res: Response) => { const token = req.headers.authorization; if (!token) return res.status(401).json({ error: 'Unauthorized' }); };",
+    "entityType": "snippet",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": "code"
+  },
+  {
+    "id": "sample-009",
+    "entityContent": "import React, { useState, useEffect } from 'react'; export function useDebounce<T>(value: T, delay: number): T { const [debouncedValue, setDebouncedValue] = useState<T>(value); return debouncedValue; }",
+    "entityType": "snippet",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": "code"
+  },
+  {
+    "id": "sample-010",
+    "entityContent": "class EventEmitter { private listeners = new Map<string, Function[]>(); on(event: string, cb: Function) { const arr = this.listeners.get(event) ?? []; this.listeners.set(event, [...arr, cb]); } }",
+    "entityType": "snippet",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": "code"
+  },
+  {
+    "id": "sample-011",
+    "entityContent": "Anyone know the ETA on the auth refactor PR? Looks like it's been sitting in review for a week now.",
+    "entityType": "message",
+    "attributes": { "replyCount": 14, "reactions": 3 },
+    "expectedTags": ["high-signal"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-012",
+    "entityContent": "PSA: we're migrating off AWS us-east-1 next Tuesday. All services need to be ready by then. Please coordinate with your teams!",
+    "entityType": "message",
+    "attributes": { "replyCount": 22, "reactions": 8 },
+    "expectedTags": ["high-signal"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-013",
+    "entityContent": "The new onboarding flow is live in staging. Would love some eyes on it before we ship to prod.",
+    "entityType": "message",
+    "attributes": { "reactions": 6, "replyCount": 2 },
+    "expectedTags": ["high-signal"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-014",
+    "entityContent": "Heads up: production incident ongoing. DB connections spiking on replica. On-call is investigating.",
+    "entityType": "message",
+    "attributes": { "replyCount": 18, "reactions": 12 },
+    "expectedTags": ["high-signal"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-015",
+    "entityContent": "Just merged the rate-limiting feature. We went from 500ms avg latency to 80ms. Big win for the team!",
+    "entityType": "message",
+    "attributes": { "reactions": 15, "replyCount": 7 },
+    "expectedTags": ["high-signal"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-016",
+    "entityContent": "Reminder that the Q2 eng all-hands is tomorrow at 2pm. Agenda has been shared in the wiki.",
+    "entityType": "message",
+    "attributes": { "replyCount": 11, "reactions": 2 },
+    "expectedTags": ["high-signal"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-017",
+    "entityContent": "We finally hit 99.9% uptime for the past 30 days. Shoutout to the SRE team for their work on the alerting pipeline.",
+    "entityType": "message",
+    "attributes": { "reactions": 20, "replyCount": 9 },
+    "expectedTags": ["high-signal"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-018",
+    "entityContent": "Breaking change alert: the /v1/users endpoint is being deprecated in favor of /v2/users next sprint. Please update your integrations.",
+    "entityType": "message",
+    "attributes": { "replyCount": 16, "reactions": 4 },
+    "expectedTags": ["high-signal"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-019",
+    "entityContent": "Hot take: we should move our entire infra to Cloudflare Workers. The cold start problem would basically go away.",
+    "entityType": "message",
+    "attributes": { "reactions": 7, "replyCount": 25 },
+    "expectedTags": ["high-signal"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-020",
+    "entityContent": "Interviewing a candidate for senior backend role this afternoon. Anyone have last-minute system design questions they'd recommend?",
+    "entityType": "message",
+    "attributes": { "replyCount": 12, "reactions": 1 },
+    "expectedTags": ["high-signal"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-021",
+    "entityContent": "Weekly engineering standup — 2024-01-15\nAttendees: Alice, Bob, Carol, Dave\nAgenda:\n1. Sprint review\n2. Blockers\n3. Q1 planning\nAction items: Bob to update CI config by Wednesday.",
+    "entityType": "meeting",
+    "attributes": {},
+    "expectedTags": ["time-sensitive"],
+    "expectedDomain": "meetings"
+  },
+  {
+    "id": "sample-022",
+    "entityContent": "Meeting minutes — Architecture review 2024-02-01\nAttendees: engineering leads, product\nAgenda: database sharding strategy, API versioning\nThe team agreed to adopt blue-green deployment for next quarter.",
+    "entityType": "meeting",
+    "attributes": {},
+    "expectedTags": ["decision"],
+    "expectedDomain": "meetings"
+  },
+  {
+    "id": "sample-023",
+    "entityContent": "Daily standup notes:\nAttendees: full backend team (8 people)\nYesterday: shipped auth refactor\nToday: working on rate limiting\nBlockers: none",
+    "entityType": "meeting",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": "meetings"
+  },
+  {
+    "id": "sample-024",
+    "entityContent": "Sprint retrospective minutes — Sprint 42\nAttendees: entire product team\nAgenda: what went well, what didn't, action items for next sprint\nAction items: improve PR review turnaround time.",
+    "entityType": "meeting",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": "meetings"
+  },
+  {
+    "id": "sample-025",
+    "entityContent": "Design sync agenda for 2024-03-10:\n1. Review new component library proposal\n2. Accessibility audit results\n3. Mobile responsiveness issues\nAttendees: design + frontend leads",
+    "entityType": "meeting",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": "meetings"
+  },
+  {
+    "id": "sample-026",
+    "entityContent": "Incident post-mortem standup:\nAttendees: on-call team, SRE, CTO\nAgenda: root cause analysis of DB outage on Jan 20\nAction items: add read replica health checks to monitoring.",
+    "entityType": "meeting",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": "meetings"
+  },
+  {
+    "id": "sample-027",
+    "entityContent": "Product roadmap sync minutes:\nAttendees: PM, design, engineering\nAgenda: Q2 feature prioritization, resourcing\nNext sync scheduled for two weeks from now.",
+    "entityType": "meeting",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": "meetings"
+  },
+  {
+    "id": "sample-028",
+    "entityContent": "All-hands meeting summary:\nAttendees: entire company (120 people)\nAgenda: Q1 results, product vision, team announcements\nAction items: leads to schedule 1:1s with their reports this week.",
+    "entityType": "meeting",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": "meetings"
+  },
+  {
+    "id": "sample-029",
+    "entityContent": "Security review sync:\nAttendees: security team, backend leads\nAgenda: SOC2 audit prep, penetration test findings\nAction items: rotate all API keys by end of month.",
+    "entityType": "meeting",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": "meetings"
+  },
+  {
+    "id": "sample-030",
+    "entityContent": "Monday standup: quick check-in on sprint progress.\nAttendees: dev team (6)\nStatus: on track for release Thursday.\nAction items: QA sign-off needed before deploy.",
+    "entityType": "meeting",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": "meetings"
+  },
+  {
+    "id": "sample-031",
+    "entityContent": "After a long discussion, the team decided to use PostgreSQL instead of MySQL for the new analytics pipeline. The main reason was better support for JSON queries.",
+    "entityType": "decision",
+    "attributes": {},
+    "expectedTags": ["decision"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-032",
+    "entityContent": "The RFC for the new event-driven architecture was approved by the architecture committee. Implementation starts next sprint.",
+    "entityType": "decision",
+    "attributes": {},
+    "expectedTags": ["decision"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-033",
+    "entityContent": "After reviewing the security audit report, it was resolved that all user passwords must be re-hashed using bcrypt with a cost factor of 12.",
+    "entityType": "decision",
+    "attributes": {},
+    "expectedTags": ["decision"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-034",
+    "entityContent": "The team agreed to adopt trunk-based development and retire long-lived feature branches starting next quarter.",
+    "entityType": "decision",
+    "attributes": {},
+    "expectedTags": ["decision"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-035",
+    "entityContent": "Leadership decided to sunset the legacy Python 2 services by end of Q3. All teams must migrate their services by then.",
+    "entityType": "decision",
+    "attributes": {},
+    "expectedTags": ["decision"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-036",
+    "entityContent": "It was agreed during the vendor review that we will not renew the Datadog contract and will migrate to Prometheus + Grafana.",
+    "entityType": "decision",
+    "attributes": {},
+    "expectedTags": ["decision"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-037",
+    "entityContent": "The proposal to open-source the core SDK was approved by the executive team pending legal review. Expected timeline is 6 months.",
+    "entityType": "decision",
+    "attributes": {},
+    "expectedTags": ["decision"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-038",
+    "entityContent": "After debate, the team resolved to keep the monorepo structure rather than splitting into separate packages. The tooling overhead was deemed too high.",
+    "entityType": "decision",
+    "attributes": {},
+    "expectedTags": ["decision"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-039",
+    "entityContent": "The engineering leads decided to enforce mandatory code reviews from at least two senior engineers for all database schema migrations.",
+    "entityType": "decision",
+    "attributes": {},
+    "expectedTags": ["decision"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-040",
+    "entityContent": "It was decided in the incident review that all services must implement circuit breakers before the next production deployment.",
+    "entityType": "decision",
+    "attributes": {},
+    "expectedTags": ["decision"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-041",
+    "entityContent": "The API gateway migration has a hard deadline of March 31. All teams must have their services migrated and tested by then or risk a production freeze.",
+    "entityType": "task",
+    "attributes": {},
+    "expectedTags": ["time-sensitive"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-042",
+    "entityContent": "Compliance report due by EOD today. Please send your sections to the shared doc before 5pm so we can do a final review.",
+    "entityType": "task",
+    "attributes": {},
+    "expectedTags": ["time-sensitive"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-043",
+    "entityContent": "Security patch must be applied to all production servers by Friday. This is a critical vulnerability (CVE-2024-1234).",
+    "entityType": "task",
+    "attributes": {},
+    "expectedTags": ["time-sensitive"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-044",
+    "entityContent": "Performance benchmarks need to be completed due by next Monday. Results will be presented to the board on Tuesday morning.",
+    "entityType": "task",
+    "attributes": {},
+    "expectedTags": ["time-sensitive"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-045",
+    "entityContent": "Vendor contract renewal deadline is approaching — we need a signed decision by Thursday or we lose the current pricing tier.",
+    "entityType": "task",
+    "attributes": {},
+    "expectedTags": ["time-sensitive"],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-046",
+    "entityContent": "The quarterly newsletter was published last week. It covers team updates and product highlights.",
+    "entityType": "document",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-047",
+    "entityContent": "Just a quick note: I reorganized the shared drive folders so they match our new project structure.",
+    "entityType": "memory",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-048",
+    "entityContent": "The team had lunch together to celebrate hitting 10k users. Great milestone for everyone involved.",
+    "entityType": "memory",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-049",
+    "entityContent": "New office chairs arrived today. The ergonomic upgrade should help with the back pain complaints from remote work era.",
+    "entityType": "memory",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-050",
+    "entityContent": "The company holiday party is scheduled for December 20th at the downtown venue.",
+    "entityType": "memory",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-051",
+    "entityContent": "We updated the team wiki with the new onboarding checklist for junior engineers joining the platform team.",
+    "entityType": "document",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-052",
+    "entityContent": "The coffee machine on the 3rd floor is broken. Facilities has been notified and a replacement is on order.",
+    "entityType": "message",
+    "attributes": { "reactions": 1, "replyCount": 2 },
+    "expectedTags": [],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-053",
+    "entityContent": "Happy birthday to our lead designer! Cake in the kitchen at 3pm today.",
+    "entityType": "message",
+    "attributes": { "reactions": 4, "replyCount": 3 },
+    "expectedTags": [],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-054",
+    "entityContent": "Reminder to submit your timesheets before end of the month so payroll can process on time.",
+    "entityType": "memory",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": null
+  },
+  {
+    "id": "sample-055",
+    "entityContent": "New parking permits are available at the front desk. Please bring your vehicle registration.",
+    "entityType": "memory",
+    "attributes": {},
+    "expectedTags": [],
+    "expectedDomain": null
+  }
+]

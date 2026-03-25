@@ -234,7 +234,8 @@ export type AxonTypeV3 =
   | "contains"
   | "supersedes"
   | "implements"
-  | "belongs_to";
+  | "belongs_to"
+  | "related";
 
 export type DomainType =
   | "code"

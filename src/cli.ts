@@ -13,6 +13,8 @@ interface CliArgs {
   output?: string;
   json?: boolean;
   content?: string;
+  since?: string;
+  type?: string;
 }
 
 export function parseCliArgs(args: string[]): CliArgs {
@@ -42,6 +44,12 @@ export function parseCliArgs(args: string[]): CliArgs {
         break;
       case "--json":
         result.json = true;
+        break;
+      case "--since":
+        result.since = args[++i];
+        break;
+      case "--type":
+        result.type = args[++i];
         break;
       case "--no-embed":
         // Legacy flag — ignored (embeddings removed)
@@ -84,6 +92,9 @@ export async function handleCli(
       break;
     case "cleanup":
       await handleCleanup(store, initStore, parsed);
+      break;
+    case "enrich":
+      await handleEnrich(store, initStore, parsed);
       break;
     default:
       printUsage();
@@ -266,6 +277,28 @@ async function handleCleanup(
   console.log(`Removed ${removed} expired status entries.`);
 }
 
+async function handleEnrich(
+  store: CortexStore,
+  initStore: () => Promise<void>,
+  args: CliArgs,
+): Promise<void> {
+  await initStore();
+  const result = await store.enrichBatch({
+    since: args.since,
+    entityType: args.type
+      ? (args.type.split(",") as import("./types.js").EntityType[])
+      : undefined,
+    limit: args.limit ?? 100,
+    unenrichedOnly: true,
+  });
+  console.log(
+    `Enriched ${result.enriched}/${result.processed} entities (batchId: ${result.batchId})`,
+  );
+  if (result.errors > 0) {
+    console.log(`Errors: ${result.errors}`);
+  }
+}
+
 function printUsage(): void {
   console.log(`Usage: hive-memory <command> [options]
 
@@ -276,6 +309,7 @@ Commands:
   inject    Recall memories and append to file
   sync      Sync external agent memory files
   cleanup   Remove expired entries
+  enrich    Run enrichment on entities (--since, --type, --limit)
 
   hook session-end    Auto-save session (Claude Code hook)
 

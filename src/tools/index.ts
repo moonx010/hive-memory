@@ -7,6 +7,7 @@ import { registerBrowseTools } from "./browse-tools.js";
 import { registerTrailTools } from "./trail-tools.js";
 import { registerConnectorTools } from "./connector-tools.js";
 import { registerTeamTools } from "./team-tools.js";
+import { registerContextTools } from "./context-tools.js";
 
 export type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 export type ToolHandler = (args: Record<string, unknown>) => Promise<ToolResult>;
@@ -60,4 +61,5 @@ export function registerTools(
   registerTrailTools(safeTool, db);
   registerConnectorTools(safeTool, db);
   registerTeamTools(safeTool, store);
+  registerContextTools(safeTool, store);
 }

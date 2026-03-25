@@ -1,4 +1,5 @@
 import BetterSqlite3 from "better-sqlite3";
+import crypto from "node:crypto";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { mkdirSync } from "node:fs";
@@ -144,7 +145,7 @@ export interface ConnectorStatus {
 
 export interface ListEntitiesOptions {
   project?: string;
-  entityType?: string;
+  entityType?: string | string[];
   domain?: string;
   namespace?: string;
   status?: string;
@@ -156,6 +157,10 @@ export interface ListEntitiesOptions {
   order?: "asc" | "desc";
   limit?: number;
   offset?: number;
+  /** When true, only return entities without _enrichedAt attribute */
+  unenrichedOnly?: boolean;
+  /** When true, only return entities with non-empty keywords array */
+  hasKeywords?: boolean;
 }
 
 export interface SearchEntitiesOptions {
@@ -393,6 +398,8 @@ export class HiveDatabase {
       order = "desc",
       limit = 50,
       offset = 0,
+      unenrichedOnly = false,
+      hasKeywords = false,
     } = options;
 
     const conditions: string[] = [];
@@ -403,8 +410,16 @@ export class HiveDatabase {
       params.project = project;
     }
     if (entityType !== undefined) {
-      conditions.push("entity_type = @entityType");
-      params.entityType = entityType;
+      if (Array.isArray(entityType)) {
+        if (entityType.length > 0) {
+          const placeholders = entityType.map((_, i) => `@et${i}`);
+          conditions.push(`entity_type IN (${placeholders.join(", ")})`);
+          entityType.forEach((t, i) => { params[`et${i}`] = t; });
+        }
+      } else {
+        conditions.push("entity_type = @entityType");
+        params.entityType = entityType;
+      }
     }
     if (domain !== undefined) {
       conditions.push("domain = @domain");
@@ -425,6 +440,12 @@ export class HiveDatabase {
     if (until !== undefined) {
       conditions.push("updated_at <= @until");
       params.until = until;
+    }
+    if (unenrichedOnly) {
+      conditions.push("JSON_EXTRACT(attributes, '$._enrichedAt') IS NULL");
+    }
+    if (hasKeywords) {
+      conditions.push("keywords != '[]'");
     }
 
     const where =
@@ -813,6 +834,103 @@ export class HiveDatabase {
       lastSync: c.lastSync,
       entryCount: this.countEntities({ namespace: c.id }),
     }));
+  }
+
+  // ── Enrichment convenience methods ──────────────────────────────────────────
+
+  /** Merge attributes into an existing entity (does not replace, only adds/overwrites keys). */
+  updateEntityAttributes(id: string, attributes: Record<string, unknown>): void {
+    const existing = this.getEntity(id);
+    if (!existing) throw new Error(`Entity not found: ${id}`);
+    this.updateEntity(id, {
+      attributes: { ...existing.attributes, ...attributes },
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  /** Append unique tags to an existing entity. */
+  addEntityTags(id: string, tags: string[]): void {
+    const existing = this.getEntity(id);
+    if (!existing) throw new Error(`Entity not found: ${id}`);
+    const merged = [...new Set([...existing.tags, ...tags])];
+    this.updateEntity(id, { tags: merged, updatedAt: new Date().toISOString() });
+  }
+
+  /** Append unique keywords to an existing entity. */
+  addEntityKeywords(id: string, keywords: string[]): void {
+    const existing = this.getEntity(id);
+    if (!existing) throw new Error(`Entity not found: ${id}`);
+    const merged = [...new Set([...existing.keywords, ...keywords])];
+    this.updateEntity(id, { keywords: merged, updatedAt: new Date().toISOString() });
+  }
+
+  /** Upsert a synapse with set-weight semantics (not +0.1 accumulation). */
+  upsertSynapse(opts: {
+    sourceId: string;
+    targetId: string;
+    axon: string;
+    weight: number;
+    metadata?: Record<string, string>;
+  }): void {
+    const now = new Date().toISOString();
+    const id = crypto.randomUUID();
+    this.db.prepare(`
+      INSERT INTO synapses (id, source, target, axon, weight, metadata, formed_at, last_potentiated)
+      VALUES (@id, @source, @target, @axon, @weight, @metadata, @formed_at, @last_potentiated)
+      ON CONFLICT(source, target, axon) DO UPDATE SET
+        weight = excluded.weight,
+        metadata = excluded.metadata,
+        last_potentiated = excluded.last_potentiated
+    `).run({
+      id,
+      source: opts.sourceId,
+      target: opts.targetId,
+      axon: opts.axon,
+      weight: Math.min(1.0, Math.max(0.0, opts.weight)),
+      metadata: JSON.stringify(opts.metadata ?? {}),
+      formed_at: now,
+      last_potentiated: now,
+    });
+  }
+
+  /** Create an entity from a draft shape, returning the generated id. */
+  upsertEntity(draft: {
+    entityType: string;
+    project?: string;
+    title?: string;
+    content: string;
+    tags: string[];
+    attributes: Record<string, unknown>;
+    source: { system: string; externalId?: string; connector?: string };
+    domain: string;
+    confidence: string;
+  }): string {
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const entity: Entity = {
+      id,
+      entityType: draft.entityType as Entity["entityType"],
+      project: draft.project,
+      namespace: "local",
+      title: draft.title,
+      content: draft.content,
+      tags: draft.tags,
+      keywords: [],
+      attributes: draft.attributes,
+      source: {
+        system: draft.source.system,
+        externalId: draft.source.externalId,
+        connector: draft.source.connector,
+      },
+      visibility: "personal",
+      domain: draft.domain as Entity["domain"],
+      confidence: draft.confidence as Entity["confidence"],
+      createdAt: now,
+      updatedAt: now,
+      status: "active",
+    };
+    this.insertEntity(entity);
+    return id;
   }
 
   // ── Lifecycle ───────────────────────────────────────────────────────────────

@@ -32,6 +32,11 @@ import type { Entity } from "./types.js";
 import type { ConnectorRegistry } from "./connectors/types.js";
 import { createConnectorRegistry } from "./connectors/types.js";
 import type { TeamSync } from "./team/git-sync.js";
+import { EnrichmentEngine } from "./enrichment/engine.js";
+import { ClassifyProvider } from "./enrichment/providers/classify.js";
+import { LLMEnrichProvider } from "./enrichment/providers/llm-enrich.js";
+import { createLLMProvider } from "./enrichment/llm/index.js";
+import type { BatchFilter, BatchResult, EnrichmentResult } from "./enrichment/types.js";
 
 // Re-export for backwards compatibility
 export { validateId } from "./store/io.js";
@@ -177,6 +182,7 @@ export class CortexStore {
   private _dbExplicit = false;
   private _team: TeamSync | undefined = undefined;
   private _connectors: ConnectorRegistry;
+  private _enrichmentEngine: EnrichmentEngine | null = null;
 
   constructor(config: CortexConfig) {
     this.dataDir = config.dataDir;
@@ -233,6 +239,32 @@ export class CortexStore {
 
   get connectors(): ConnectorRegistry {
     return this._connectors;
+  }
+
+  /** Lazily initialize the enrichment engine. */
+  get enrichmentEngine(): EnrichmentEngine {
+    if (!this._enrichmentEngine) {
+      const db = this.database;
+      const enrichMode = process.env.CORTEX_ENRICHMENT ?? "rule";
+      const llm = createLLMProvider();
+      this._enrichmentEngine = new EnrichmentEngine(db, llm);
+
+      if (enrichMode !== "off") {
+        this._enrichmentEngine.register(new ClassifyProvider());
+      }
+      if (enrichMode === "llm" && llm) {
+        this._enrichmentEngine.register(new LLMEnrichProvider());
+      }
+    }
+    return this._enrichmentEngine;
+  }
+
+  async enrichEntity(entityId: string): Promise<EnrichmentResult[]> {
+    return this.enrichmentEngine.enrichEntity(entityId);
+  }
+
+  async enrichBatch(opts: BatchFilter = {}): Promise<BatchResult> {
+    return this.enrichmentEngine.enrichBatch(opts);
   }
 
   // ── Lifecycle ──

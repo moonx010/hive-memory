@@ -21,7 +21,8 @@
     "test": "vitest",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "eval:enrichment": "npx tsx src/enrichment/eval/eval.ts"
   },
   "keywords": [
     "mcp",
