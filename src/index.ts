@@ -57,6 +57,14 @@ async function registerConnectors(store: CortexStore): Promise<void> {
     );
   }
 
+  if (process.env["OUTLOOK_TOKEN"]) {
+    imports.push(
+      import("./connectors/outlook.js")
+        .then(({ OutlookConnector }) => { registry.register(new OutlookConnector()); })
+        .catch((err) => { console.error(`[cortex] Failed to load Outlook connector: ${err?.message ?? err}`); }),
+    );
+  }
+
   await Promise.allSettled(imports);
 }
 
@@ -85,7 +93,7 @@ async function handleHook(args: string[]): Promise<void> {
 
 // --- CLI commands ---
 
-const CLI_COMMANDS = new Set(["store", "recall", "status", "inject", "sync", "cleanup", "stats", "team", "enrich", "meeting", "audit", "briefing"]);
+const CLI_COMMANDS = new Set(["store", "recall", "status", "inject", "sync", "cleanup", "stats", "team", "enrich", "meeting", "audit", "briefing", "analyze", "patterns"]);
 
 // --- Main ---
 

@@ -10,6 +10,7 @@ import { registerTeamTools } from "./team-tools.js";
 import { registerContextTools } from "./context-tools.js";
 import { registerMeetingTools } from "./meeting-tools.js";
 import { registerStewardTools } from "./steward-tools.js";
+import { registerAdvisorTools } from "./advisor-tools.js";
 
 export type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 export type ToolHandler = (args: Record<string, unknown>) => Promise<ToolResult>;
@@ -66,4 +67,5 @@ export function registerTools(
   registerContextTools(safeTool, store);
   registerMeetingTools(safeTool, store);
   registerStewardTools(safeTool, store);
+  registerAdvisorTools(safeTool, db);
 }
