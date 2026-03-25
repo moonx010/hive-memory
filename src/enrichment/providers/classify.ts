@@ -3,6 +3,7 @@ import type {
   EnrichmentContext,
   EnrichmentProvider,
   EnrichmentResult,
+  EnrichmentStage,
 } from "../types.js";
 
 const CODE_PATTERNS = [
@@ -46,6 +47,7 @@ export class ClassifyProvider implements EnrichmentProvider {
   readonly name = "Rule-Based Classifier";
   readonly applicableTo: ["*"] = ["*"];
   readonly priority = 100;
+  readonly stage: EnrichmentStage = "classify";
 
   shouldEnrich(entity: Entity): boolean {
     return entity.content.length >= 20;

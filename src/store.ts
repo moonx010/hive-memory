@@ -38,7 +38,7 @@ import { ClassifyProvider } from "./enrichment/providers/classify.js";
 import { LLMEnrichProvider } from "./enrichment/providers/llm-enrich.js";
 import { DecisionExtractorProvider } from "./enrichment/providers/decision-extractor.js";
 import { createLLMProvider } from "./enrichment/llm/index.js";
-import type { BatchFilter, BatchResult, EnrichmentResult } from "./enrichment/types.js";
+import type { BatchFilter, BatchResult, EnrichmentResult, EnrichmentStage } from "./enrichment/types.js";
 import { EntityResolver } from "./enrichment/entity-resolver.js";
 
 // Re-export for backwards compatibility
@@ -272,8 +272,11 @@ export class CortexStore {
     return this._entityResolver;
   }
 
-  async enrichEntity(entityId: string): Promise<EnrichmentResult[]> {
-    return this.enrichmentEngine.enrichEntity(entityId);
+  async enrichEntity(
+    entityId: string,
+    opts?: { force?: boolean; stage?: EnrichmentStage },
+  ): Promise<EnrichmentResult[]> {
+    return this.enrichmentEngine.enrichEntity(entityId, opts);
   }
 
   async enrichBatch(opts: BatchFilter = {}): Promise<BatchResult> {
@@ -480,6 +483,7 @@ export class CortexStore {
     added: number;
     updated: number;
     skipped: number;
+    archived: number;
     errors: number;
     lastError?: string;
   }> {
@@ -501,6 +505,7 @@ export class CortexStore {
     let added = 0;
     let updated = 0;
     let skipped = 0;
+    let archived = 0;
     let errors = 0;
     let lastError: string | undefined;
     const entityMap = new Map<string, string>(); // externalId → entityId
@@ -515,11 +520,8 @@ export class CortexStore {
         break;
       case "rollback":
         if (connector.rollbackSync) {
-          const window = {
-            since: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
-            until: new Date().toISOString(),
-          };
-          gen = connector.rollbackSync(window);
+          const rollbackWindow = sm.getRollbackWindow();
+          gen = connector.rollbackSync(rollbackWindow);
         } else {
           gen = connector.incrementalSync(cursor);
         }
@@ -530,9 +532,37 @@ export class CortexStore {
         break;
     }
 
+    // Build sync metadata object stamped on all entities during this sync
+    const syncMeta = {
+      _lastSyncedAt: new Date().toISOString(),
+      _syncCursor: cursor ?? null,
+      _syncPhase: phase,
+      _syncConnector: connectorId,
+      _sourceDeleted: false,
+    };
+
     try {
       for await (const doc of gen) {
         try {
+          // Check for source-reported deletion
+          if (doc._deleted) {
+            const existing = db.getByExternalId(doc.source, doc.externalId);
+            if (existing) {
+              db.updateEntityAttributes(existing.id, {
+                ...syncMeta,
+                _sourceDeleted: true,
+              });
+              if (existing.status !== "archived") {
+                db.updateEntity(existing.id, {
+                  status: "archived",
+                  updatedAt: new Date().toISOString(),
+                });
+                archived++;
+              }
+            }
+            continue;
+          }
+
           const drafts = connector.transform(doc);
 
           for (const draft of drafts) {
@@ -545,7 +575,7 @@ export class CortexStore {
                   title: draft.title,
                   content: draft.content,
                   tags: draft.tags,
-                  attributes: draft.attributes,
+                  attributes: { ...draft.attributes, ...syncMeta },
                   status: draftStatus as Entity["status"],
                   updatedAt: new Date().toISOString(),
                 });
@@ -553,6 +583,8 @@ export class CortexStore {
                 if (result.changed) {
                   updated++;
                 } else {
+                  // Content unchanged — still stamp sync metadata
+                  db.updateEntityAttributes(existing.id, syncMeta);
                   skipped++;
                 }
               } else {
@@ -567,7 +599,7 @@ export class CortexStore {
                   content: draft.content,
                   tags: draft.tags,
                   keywords,
-                  attributes: draft.attributes,
+                  attributes: { ...draft.attributes, ...syncMeta },
                   source: draft.source,
                   author: draft.author,
                   visibility: "personal",
@@ -615,7 +647,7 @@ export class CortexStore {
         }
       }
 
-      return { added, updated, skipped, errors: finalErrors, lastError };
+      return { added, updated, skipped, archived, errors: finalErrors, lastError };
     }
 
     // Post-sync hook for connector-specific synapse creation
@@ -630,7 +662,7 @@ export class CortexStore {
       syncCursor: connector.getCursor(),
     });
 
-    return { added, updated, skipped, errors, lastError };
+    return { added, updated, skipped, archived, errors, lastError };
   }
 
   /** Simple keyword extraction (reuses hive-index logic) */

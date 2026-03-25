@@ -59,6 +59,9 @@ export interface RawDocument {
   author?: string;
   timestamp: string;
   metadata: Record<string, unknown>;
+  /** Set to true when the source system reports this entity as deleted/archived.
+   *  syncConnector() will mark the corresponding entity as status: "archived". */
+  _deleted?: boolean;
 }
 
 export interface EntityDraft {

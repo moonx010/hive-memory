@@ -3,6 +3,7 @@ import type {
   EnrichmentContext,
   EnrichmentProvider,
   EnrichmentResult,
+  EnrichmentStage,
 } from "../types.js";
 
 const RETRY_MAX = 3;
@@ -17,6 +18,7 @@ export class LLMEnrichProvider implements EnrichmentProvider {
   readonly name = "LLM Enricher";
   readonly applicableTo: ["*"] = ["*"];
   readonly priority = 200;
+  readonly stage: EnrichmentStage = "extract";
 
   shouldEnrich(entity: Entity): boolean {
     return entity.content.length >= 100;

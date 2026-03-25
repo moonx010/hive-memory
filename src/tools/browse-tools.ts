@@ -407,6 +407,45 @@ export function registerBrowseTools(safeTool: SafeToolFn, db: HiveDatabase) {
         lines.push(``);
       }
 
+      // Enrichment Stage Status
+      const stageKeys: Record<string, string> = {
+        classify: "_classifiedAt",
+        extract: "_extractedAt",
+        stitch: "_stitchedAt",
+        resolve: "_resolvedAt",
+      };
+      const enrichedAt = entity.attributes?._enrichedAt as string | undefined;
+      const enrichedBy = entity.attributes?._enrichedBy as string[] | undefined;
+      if (enrichedAt || enrichedBy) {
+        lines.push(`─── Enrichment Status ───`);
+        lines.push(``);
+        lines.push(`| Stage    | Status |`);
+        lines.push(`|----------|--------|`);
+        for (const [stage, key] of Object.entries(stageKeys)) {
+          const val = entity.attributes?.[key] as string | undefined;
+          lines.push(`| ${stage.padEnd(8)} | ${val ? `Done (${val})` : "Pending"} |`);
+        }
+        lines.push(``);
+        lines.push(`| Enriched At | ${enrichedAt ?? "never"} |`);
+        lines.push(`| Enriched By | ${(enrichedBy ?? []).join(", ") || "none"} |`);
+        lines.push(``);
+      }
+
+      // Sync Provenance (connector-sourced entities only)
+      if (entity.source?.connector) {
+        lines.push(`─── Sync Provenance ───`);
+        lines.push(``);
+        lines.push(`| Field | Value |`);
+        lines.push(`|-------|-------|`);
+        lines.push(`| Last Synced | ${entity.attributes?._lastSyncedAt ?? "never"} |`);
+        lines.push(`| Sync Cursor | ${entity.attributes?._syncCursor ?? "N/A"} |`);
+        lines.push(`| Sync Phase | ${entity.attributes?._syncPhase ?? "N/A"} |`);
+        lines.push(`| Connector | ${entity.attributes?._syncConnector ?? entity.source.connector} |`);
+        lines.push(`| Source Deleted | ${entity.attributes?._sourceDeleted ? "Yes" : "No"} |`);
+        lines.push(`| Content Hash | ${entity.contentHash?.slice(0, 12) ?? "N/A"}... |`);
+        lines.push(``);
+      }
+
       // Synapses
       const synapses = db.getSynapsesByEntry(id, "both");
       if (synapses.length > 0) {

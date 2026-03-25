@@ -278,6 +278,11 @@ export class NotionConnector implements ConnectorPlugin {
     yield* this._searchAll(since);
   }
 
+  async *rollbackSync(window: { since: string; until: string }): AsyncGenerator<RawDocument> {
+    this.cursor = new Date().toISOString();
+    yield* this._searchAll(window.since);
+  }
+
   private async *_searchAll(since?: string): AsyncGenerator<RawDocument> {
     if (this.databases.length > 0) {
       for (const dbId of this.databases) {

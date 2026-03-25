@@ -95,8 +95,9 @@ export function registerConnectorTools(safeTool: SafeToolFn, db: HiveDatabase) {
         const entryCount = db.countEntities({ namespace: c.id });
         const phase = c.syncPhase ?? "initial";
 
+        const cursorStr = c.syncCursor ? `  |  Cursor: ${c.syncCursor}` : "";
         lines.push(`${icon} ${c.id}  (${c.connectorType})`);
-        lines.push(`    Status: ${c.status}  |  Phase: ${phase}  |  Last sync: ${lastSyncStr}  |  Entries: ${entryCount}`);
+        lines.push(`    Status: ${c.status}  |  Phase: ${phase}  |  Last sync: ${lastSyncStr}  |  Entries: ${entryCount}${cursorStr}`);
         lines.push(``);
       }
 

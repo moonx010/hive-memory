@@ -170,6 +170,15 @@ export class GitHubConnector implements ConnectorPlugin {
     yield* this._syncAll(since);
   }
 
+  async *rollbackSync(window: { since: string; until: string }): AsyncGenerator<RawDocument> {
+    // Re-fetch PRs and issues updated within the rollback window.
+    // ADRs and CODEOWNERS are skipped (static content, rarely change).
+    for (const repo of this.repos) {
+      yield* this._syncPRs(repo, window.since);
+      yield* this._syncIssues(repo, window.since);
+    }
+  }
+
   private async *_syncAll(since?: string): AsyncGenerator<RawDocument> {
     this.cursor = new Date().toISOString();
 

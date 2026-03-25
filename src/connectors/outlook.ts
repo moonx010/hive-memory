@@ -249,6 +249,12 @@ export class OutlookConnector implements ConnectorPlugin {
     }
   }
 
+  async *rollbackSync(window: { since: string; until: string }): AsyncGenerator<RawDocument> {
+    this._lastSyncStart = new Date().toISOString();
+    this._syncedDrafts = [];
+    yield* this.fetchEvents({ lastModifiedSince: window.since });
+  }
+
   private async *fetchCalendarView(
     startDateTime: string,
     endDateTime: string,
