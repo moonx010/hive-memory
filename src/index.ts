@@ -21,36 +21,43 @@ const SYNC_LOCAL = process.env["CORTEX_LOCAL_SYNC"] !== "false";
  * Register all available connectors that have valid credentials.
  * Connectors are configured via environment variables.
  */
-function registerConnectors(store: CortexStore): void {
+async function registerConnectors(store: CortexStore): Promise<void> {
   const registry = store.connectors;
+  const imports: Promise<void>[] = [];
 
-  // GitHub connector
   if (process.env["GITHUB_TOKEN"]) {
-    import("./connectors/github.js").then(({ GitHubConnector }) => {
-      registry.register(new GitHubConnector());
-    }).catch(() => {});
+    imports.push(
+      import("./connectors/github.js")
+        .then(({ GitHubConnector }) => { registry.register(new GitHubConnector()); })
+        .catch((err) => { console.error(`[cortex] Failed to load GitHub connector: ${err?.message ?? err}`); }),
+    );
   }
 
-  // Slack connector
   if (process.env["SLACK_TOKEN"]) {
-    import("./connectors/slack.js").then(({ SlackConnector }) => {
-      registry.register(new SlackConnector());
-    }).catch(() => {});
+    imports.push(
+      import("./connectors/slack.js")
+        .then(({ SlackConnector }) => { registry.register(new SlackConnector()); })
+        .catch((err) => { console.error(`[cortex] Failed to load Slack connector: ${err?.message ?? err}`); }),
+    );
   }
 
-  // Notion connector
   if (process.env["NOTION_TOKEN"]) {
-    import("./connectors/notion.js").then(({ NotionConnector }) => {
-      registry.register(new NotionConnector());
-    }).catch(() => {});
+    imports.push(
+      import("./connectors/notion.js")
+        .then(({ NotionConnector }) => { registry.register(new NotionConnector()); })
+        .catch((err) => { console.error(`[cortex] Failed to load Notion connector: ${err?.message ?? err}`); }),
+    );
   }
 
-  // Google Calendar connector
   if (process.env["GOOGLE_CALENDAR_CREDENTIALS"]) {
-    import("./connectors/calendar.js").then(({ CalendarConnector }) => {
-      registry.register(new CalendarConnector());
-    }).catch(() => {});
+    imports.push(
+      import("./connectors/calendar.js")
+        .then(({ CalendarConnector }) => { registry.register(new CalendarConnector()); })
+        .catch((err) => { console.error(`[cortex] Failed to load Calendar connector: ${err?.message ?? err}`); }),
+    );
   }
+
+  await Promise.allSettled(imports);
 }
 
 function createStore(): CortexStore {
@@ -111,9 +118,7 @@ async function main() {
   if (args[0] === "sync" && args[1] && !args[1].startsWith("--")) {
     const store = createStore();
     await store.init();
-    registerConnectors(store);
-    // Wait a tick for dynamic imports to resolve
-    await new Promise(r => setTimeout(r, 100));
+    await registerConnectors(store);
     await handleConnectorSync(store, args[1]);
     return;
   }
@@ -131,7 +136,7 @@ async function main() {
   // Default: MCP server mode
   const store = createStore();
   await store.init();
-  registerConnectors(store);
+  await registerConnectors(store);
 
   const server = new McpServer({
     name: "cortex",
