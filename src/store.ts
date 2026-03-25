@@ -35,6 +35,7 @@ import type { TeamSync } from "./team/git-sync.js";
 import { EnrichmentEngine } from "./enrichment/engine.js";
 import { ClassifyProvider } from "./enrichment/providers/classify.js";
 import { LLMEnrichProvider } from "./enrichment/providers/llm-enrich.js";
+import { DecisionExtractorProvider } from "./enrichment/providers/decision-extractor.js";
 import { createLLMProvider } from "./enrichment/llm/index.js";
 import type { BatchFilter, BatchResult, EnrichmentResult } from "./enrichment/types.js";
 
@@ -250,6 +251,7 @@ export class CortexStore {
       this._enrichmentEngine = new EnrichmentEngine(db, llm);
 
       if (enrichMode !== "off") {
+        this._enrichmentEngine.register(new DecisionExtractorProvider());
         this._enrichmentEngine.register(new ClassifyProvider());
       }
       if (enrichMode === "llm" && llm) {

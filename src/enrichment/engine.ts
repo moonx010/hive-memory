@@ -143,17 +143,26 @@ export class EnrichmentEngine {
     if (result.keywords?.length) {
       this.db.addEntityKeywords(entity.id, result.keywords);
     }
+
+    // Upsert derived entities first, tracking externalId → entityId mapping
+    const externalIdMap = new Map<string, string>();
+    for (const draft of result.derivedEntities ?? []) {
+      const entityId = this.db.upsertEntity(draft);
+      if (draft.source?.externalId) {
+        externalIdMap.set(draft.source.externalId, entityId);
+      }
+    }
+
+    // Create synapses, resolving externalId references to real entity IDs
     for (const syn of result.synapses ?? []) {
+      const resolvedTargetId = externalIdMap.get(syn.targetId) ?? syn.targetId;
       this.db.upsertSynapse({
         sourceId: entity.id,
-        targetId: syn.targetId,
+        targetId: resolvedTargetId,
         axon: syn.axon,
         weight: syn.weight,
         metadata: syn.metadata,
       });
-    }
-    for (const draft of result.derivedEntities ?? []) {
-      this.db.upsertEntity(draft);
     }
   }
 }

@@ -22,7 +22,8 @@
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build",
-    "eval:enrichment": "npx tsx src/enrichment/eval/eval.ts"
+    "eval:enrichment": "npx tsx src/enrichment/eval/eval.ts",
+    "eval:decisions": "npx tsx src/enrichment/eval/decision-eval.ts"
   },
   "keywords": [
     "mcp",
