@@ -85,7 +85,7 @@ async function handleHook(args: string[]): Promise<void> {
 
 // --- CLI commands ---
 
-const CLI_COMMANDS = new Set(["store", "recall", "status", "inject", "sync", "cleanup", "stats", "team", "enrich", "meeting"]);
+const CLI_COMMANDS = new Set(["store", "recall", "status", "inject", "sync", "cleanup", "stats", "team", "enrich", "meeting", "audit", "briefing"]);
 
 // --- Main ---
 

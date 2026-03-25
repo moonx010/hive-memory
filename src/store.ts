@@ -475,7 +475,12 @@ export class CortexStore {
 
   // ── v3 Connector sync ──
 
-  async syncConnector(connectorId: string, full = false): Promise<{ added: number; updated: number }> {
+  async syncConnector(connectorId: string, full = false): Promise<{
+    added: number;
+    updated: number;
+    errors: number;
+    lastError?: string;
+  }> {
     const connector = this._connectors.get(connectorId);
     if (!connector) {
       throw new Error(`Connector "${connectorId}" is not registered. Available: ${this._connectors.list().map(c => c.id).join(", ") || "(none)"}`);
@@ -487,59 +492,106 @@ export class CortexStore {
     const db = this.database;
     let added = 0;
     let updated = 0;
+    let errors = 0;
+    let lastError: string | undefined;
     const entityMap = new Map<string, string>(); // externalId → entityId
+
+    // Mark connector as syncing
+    db.upsertConnector({
+      id: connectorId,
+      connectorType: connector.id,
+      config: {},
+      status: "syncing",
+    });
 
     const cursor = full ? undefined : connector.getCursor();
     const gen = full ? connector.fullSync() : connector.incrementalSync(cursor);
 
-    for await (const doc of gen) {
-      const drafts = connector.transform(doc);
+    try {
+      for await (const doc of gen) {
+        try {
+          const drafts = connector.transform(doc);
 
-      for (const draft of drafts) {
-        // Check for existing entity by source external ID (upsert)
-        const existing = db.getByExternalId(draft.source.system, draft.source.externalId);
-        const draftStatus = draft.status ?? "active";
+          for (const draft of drafts) {
+            try {
+              const existing = db.getByExternalId(draft.source.system, draft.source.externalId);
+              const draftStatus = draft.status ?? "active";
 
-        if (existing) {
-          // Update existing entity
-          db.updateEntity(existing.id, {
-            title: draft.title,
-            content: draft.content,
-            tags: draft.tags,
-            attributes: draft.attributes,
-            status: draftStatus as Entity["status"],
-            updatedAt: new Date().toISOString(),
-          });
-          entityMap.set(draft.source.externalId, existing.id);
-          updated++;
-        } else {
-          // Insert new entity
-          const now = new Date().toISOString();
-          const keywords = this._extractKeywords(draft.content + " " + (draft.title ?? ""));
-          const entity: Entity = {
-            id: randomUUID(),
-            entityType: draft.entityType as Entity["entityType"],
-            project: draft.project,
-            namespace: "local",
-            title: draft.title,
-            content: draft.content,
-            tags: draft.tags,
-            keywords,
-            attributes: draft.attributes,
-            source: draft.source,
-            author: draft.author,
-            visibility: "personal",
-            domain: draft.domain as Entity["domain"],
-            confidence: draft.confidence,
-            createdAt: now,
-            updatedAt: now,
-            status: draftStatus as Entity["status"],
-          };
-          db.insertEntity(entity);
-          entityMap.set(draft.source.externalId, entity.id);
-          added++;
+              if (existing) {
+                db.updateEntity(existing.id, {
+                  title: draft.title,
+                  content: draft.content,
+                  tags: draft.tags,
+                  attributes: draft.attributes,
+                  status: draftStatus as Entity["status"],
+                  updatedAt: new Date().toISOString(),
+                });
+                entityMap.set(draft.source.externalId, existing.id);
+                updated++;
+              } else {
+                const now = new Date().toISOString();
+                const keywords = this._extractKeywords(draft.content + " " + (draft.title ?? ""));
+                const entity: Entity = {
+                  id: randomUUID(),
+                  entityType: draft.entityType as Entity["entityType"],
+                  project: draft.project,
+                  namespace: "local",
+                  title: draft.title,
+                  content: draft.content,
+                  tags: draft.tags,
+                  keywords,
+                  attributes: draft.attributes,
+                  source: draft.source,
+                  author: draft.author,
+                  visibility: "personal",
+                  domain: draft.domain as Entity["domain"],
+                  confidence: draft.confidence,
+                  createdAt: now,
+                  updatedAt: now,
+                  status: draftStatus as Entity["status"],
+                };
+                db.insertEntity(entity);
+                entityMap.set(draft.source.externalId, entity.id);
+                added++;
+              }
+            } catch (err) {
+              errors++;
+              lastError = err instanceof Error ? err.message : String(err);
+              console.error(`[sync:${connectorId}] Failed to upsert entity ${draft.source.externalId}: ${lastError}`);
+            }
+          }
+        } catch (err) {
+          errors++;
+          lastError = err instanceof Error ? err.message : String(err);
+          console.error(`[sync:${connectorId}] Failed to transform doc ${doc.externalId}: ${lastError}`);
         }
       }
+    } catch (err) {
+      // Generator-level error (e.g., API auth failure, network error)
+      lastError = err instanceof Error ? err.message : String(err);
+      console.error(`[sync:${connectorId}] Sync stream error: ${lastError}`);
+
+      // Save partial progress before re-throwing fatal errors
+      const now = new Date().toISOString();
+      db.upsertConnector({
+        id: connectorId,
+        connectorType: connector.id,
+        config: {},
+        lastSync: now,
+        status: "error",
+        syncCursor: connector.getCursor(),
+      });
+
+      // Still run postSync for entities processed so far
+      if (connector.postSync && entityMap.size > 0) {
+        try {
+          connector.postSync(db, entityMap);
+        } catch (postErr) {
+          console.error(`[sync:${connectorId}] postSync failed: ${postErr}`);
+        }
+      }
+
+      return { added, updated, errors: errors + 1, lastError };
     }
 
     // Post-sync hook for connector-specific synapse creation
@@ -554,11 +606,11 @@ export class CortexStore {
       connectorType: connector.id,
       config: {},
       lastSync: now,
-      status: "idle",
+      status: errors > 0 ? "error" : "idle",
       syncCursor: connector.getCursor(),
     });
 
-    return { added, updated };
+    return { added, updated, errors, lastError };
   }
 
   /** Simple keyword extraction (reuses hive-index logic) */

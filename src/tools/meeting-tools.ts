@@ -52,4 +52,40 @@ export function registerMeetingTools(
       };
     },
   );
+
+  safeTool(
+    "meeting_briefing",
+    "Generate a pre-meeting briefing with attendee context, related decisions, and pending action items",
+    {
+      title: z.string(),
+      attendees: z.array(z.string()),
+      topics: z.array(z.string()).optional(),
+    },
+    async ({ title, attendees, topics }) => {
+      const agent = new MeetingAgent(
+        store.database,
+        store.enrichmentEngine,
+      );
+
+      const result = await agent.generateBriefing({
+        title: title as string,
+        attendees: attendees as string[],
+        topics: topics as string[] | undefined,
+      });
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              relatedDecisions: result.relatedDecisions,
+              pendingActions: result.pendingActions,
+              attendeeActivity: result.attendeeActivity,
+              markdown: result.markdownOutput,
+            }),
+          },
+        ],
+      };
+    },
+  );
 }

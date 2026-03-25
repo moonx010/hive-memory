@@ -2,6 +2,7 @@ import type { LLMProvider } from "../types.js";
 import { OpenAIProvider } from "./openai.js";
 import { AnthropicProvider } from "./anthropic.js";
 import { OllamaProvider } from "./ollama.js";
+import { BudgetedLLMProvider } from "./budget.js";
 
 export function createLLMProvider(): LLMProvider | undefined {
   const enrichMode = process.env.CORTEX_ENRICHMENT ?? "rule";
@@ -18,17 +19,29 @@ export function createLLMProvider(): LLMProvider | undefined {
     );
   }
 
+  let inner: LLMProvider;
   switch (provider) {
     case "openai":
-      return new OpenAIProvider(apiKey, model ?? "gpt-4o-mini");
+      inner = new OpenAIProvider(apiKey, model ?? "gpt-4o-mini");
+      break;
     case "anthropic":
-      return new AnthropicProvider(apiKey, model ?? "claude-haiku-4-5");
+      inner = new AnthropicProvider(apiKey, model ?? "claude-haiku-4-5");
+      break;
     case "ollama":
-      return new OllamaProvider(
+      inner = new OllamaProvider(
         baseUrl ?? "http://localhost:11434",
         model ?? "llama3",
       );
+      break;
     default:
       throw new Error(`Unknown LLM provider: ${provider}`);
   }
+
+  // Wrap with budget tracking and caching if configured
+  const hasBudget =
+    process.env.CORTEX_LLM_BUDGET_DAILY ||
+    process.env.CORTEX_LLM_BUDGET_MONTHLY ||
+    process.env.CORTEX_LLM_CACHE === "true";
+
+  return hasBudget ? new BudgetedLLMProvider(inner) : inner;
 }

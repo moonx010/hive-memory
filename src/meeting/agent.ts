@@ -13,6 +13,23 @@ export interface MeetingAgentOptions {
   calendarEventId?: string;
 }
 
+export interface PreBriefingOptions {
+  title: string;
+  attendees: string[];
+  topics?: string[];
+}
+
+export interface PreBriefingResult {
+  markdownOutput: string;
+  attendeeActivity: Array<{
+    name: string;
+    recentDecisions: number;
+    recentActions: number;
+  }>;
+  relatedDecisions: number;
+  pendingActions: number;
+}
+
 export interface MeetingAgentResult {
   meetingEntityId: string;
   speakers: string[];
@@ -179,6 +196,109 @@ export class MeetingAgent {
       decisionsCreated: allDecisions.length,
       actionsCreated: allActions.length,
       markdownOutput,
+    };
+  }
+
+  /**
+   * Generate a pre-meeting briefing based on attendees and topics.
+   * Looks up attendee activity, related decisions, and pending action items.
+   */
+  async generateBriefing(opts: PreBriefingOptions): Promise<PreBriefingResult> {
+    const lines: string[] = [
+      `# Pre-Meeting Briefing: ${opts.title}`,
+      "",
+      `**Attendees:** ${opts.attendees.join(", ")}`,
+      "",
+    ];
+
+    // 1. Attendee activity — find person entities and their recent involvement
+    const attendeeActivity: PreBriefingResult["attendeeActivity"] = [];
+
+    for (const name of opts.attendees) {
+      const normalized = name.toLowerCase().trim();
+      const persons = this.db.findPersonsByNormalizedName(normalized);
+
+      let recentDecisions = 0;
+      let recentActions = 0;
+
+      for (const person of persons) {
+        // Find meetings this person attended
+        const synapses = this.db.getSynapsesByEntry(person.id, "outgoing", "attended");
+        for (const syn of synapses) {
+          // Count decisions/actions derived from those meetings
+          const decisions = this.db.listEntities({ entityType: "decision" })
+            .filter((e) => e.attributes?.extractedFrom === syn.target);
+          const actions = this.db.listEntities({ entityType: "task" })
+            .filter((e) => e.attributes?.extractedFrom === syn.target);
+          recentDecisions += decisions.length;
+          recentActions += actions.length;
+        }
+      }
+
+      attendeeActivity.push({ name, recentDecisions, recentActions });
+    }
+
+    // 2. Attendee summary
+    lines.push("## Attendee Context", "");
+    for (const a of attendeeActivity) {
+      if (a.recentDecisions > 0 || a.recentActions > 0) {
+        lines.push(`- **${a.name}**: ${a.recentDecisions} recent decisions, ${a.recentActions} action items`);
+      } else {
+        lines.push(`- **${a.name}**: No recent activity in memory`);
+      }
+    }
+    lines.push("");
+
+    // 3. Topic-related decisions
+    const topicQueries = opts.topics ?? [opts.title];
+    const relatedDecisions: Array<{ title: string; content: string }> = [];
+
+    for (const topic of topicQueries) {
+      const results = this.db.searchEntities(topic, {
+        entityType: "decision",
+        limit: 5,
+      });
+      for (const r of results) {
+        if (!relatedDecisions.find((d) => d.title === r.title)) {
+          relatedDecisions.push({
+            title: r.title ?? r.content.slice(0, 80),
+            content: r.content.slice(0, 200),
+          });
+        }
+      }
+    }
+
+    lines.push("## Related Decisions", "");
+    if (relatedDecisions.length > 0) {
+      for (const d of relatedDecisions.slice(0, 10)) {
+        lines.push(`- ${d.title}`);
+      }
+    } else {
+      lines.push("No related decisions found.");
+    }
+    lines.push("");
+
+    // 4. Pending action items
+    const pendingActions = this.db
+      .listEntities({ entityType: "task", limit: 20 })
+      .filter((e) => e.attributes?.actionStatus === "open");
+
+    lines.push("## Pending Action Items", "");
+    if (pendingActions.length > 0) {
+      for (const a of pendingActions.slice(0, 10)) {
+        const owner = (a.attributes?.owner as string) ?? "unassigned";
+        lines.push(`- [ ] ${a.title ?? a.content.slice(0, 80)} — ${owner}`);
+      }
+    } else {
+      lines.push("No pending action items.");
+    }
+    lines.push("");
+
+    return {
+      markdownOutput: lines.join("\n"),
+      attendeeActivity,
+      relatedDecisions: relatedDecisions.length,
+      pendingActions: pendingActions.length,
     };
   }
 

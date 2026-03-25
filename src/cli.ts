@@ -3,6 +3,7 @@ import type { CortexStore } from "./store.js";
 import type { MemoryCategory } from "./types.js";
 import { validateId } from "./store/io.js";
 import { MeetingAgent } from "./meeting/agent.js";
+import { MemorySteward } from "./steward/index.js";
 
 interface CliArgs {
   command: string;
@@ -99,6 +100,12 @@ export async function handleCli(
       break;
     case "meeting":
       await handleMeeting(store, initStore, parsed);
+      break;
+    case "audit":
+      await handleAudit(store, initStore);
+      break;
+    case "briefing":
+      await handleBriefing(store, initStore, parsed);
       break;
     default:
       printUsage();
@@ -334,6 +341,28 @@ async function handleMeeting(
   );
 }
 
+async function handleAudit(
+  store: CortexStore,
+  initStore: () => Promise<void>,
+): Promise<void> {
+  await initStore();
+  const steward = new MemorySteward(store.database);
+  const report = steward.audit();
+  console.log(report.markdownOutput);
+}
+
+async function handleBriefing(
+  store: CortexStore,
+  initStore: () => Promise<void>,
+  args: CliArgs,
+): Promise<void> {
+  await initStore();
+  const steward = new MemorySteward(store.database);
+  const period = (args.type === "weekly" ? "weekly" : "daily") as "daily" | "weekly";
+  const report = steward.briefing(period);
+  console.log(report.markdownOutput);
+}
+
 function printUsage(): void {
   console.log(`Usage: hive-memory <command> [options]
 
@@ -346,6 +375,8 @@ Commands:
   cleanup   Remove expired entries
   enrich    Run enrichment on entities (--since, --type, --limit)
   meeting   Process a meeting transcript (--title, --output)
+  audit     Run memory data quality audit
+  briefing  Generate daily/weekly briefing (--type daily|weekly)
 
   hook session-end    Auto-save session (Claude Code hook)
 

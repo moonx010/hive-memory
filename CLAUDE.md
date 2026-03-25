@@ -17,11 +17,12 @@ Stores entities (decisions, learnings, documents, conversations, people) in a SQ
 ### v3 (Current) — SQLite + Entity Model
 - **Database**: Single SQLite file with FTS5 virtual table for full-text search
   - `entities` table: unified entity model (memory, reference, decision, person, document, conversation, message, meeting, task, event, snippet)
-  - `synapses` table: weighted directed graph (14 axon types)
+  - `synapses` table: weighted directed graph (15 axon types)
   - `coactivations` table: Hebbian learning pairs
+  - `entity_aliases` table: cross-source identity mapping (schema v2)
   - `projects`, `sessions`, `connectors` tables
 - **Search**: FTS5 BM25 + spreading activation + RRF fusion
-- **24 MCP tools**: 10 v2-compatible + 14 new (browse, trail, connectors, team)
+- **30 MCP tools**: 10 v2-compatible + 20 new (browse, trail, connectors, team, context, meeting, steward)
 
 ### v2 (Legacy, auto-migrated) — JSON Cell Tree
 - Hive cell tree (`hive.json` + `cells/*.json`) with keyword-based clustering
@@ -36,13 +37,16 @@ Stores entities (decisions, learnings, documents, conversations, people) in a SQ
 **Trail** (3): `memory_trail`, `memory_who`, `memory_decay`
 **Connector** (2): `connector_sync`, `connector_status`
 **Team** (4): `team_init`, `team_push`, `team_pull`, `team_status`
+**Context** (2): `context_enrich`, `entity_resolve`
+**Meeting** (2): `meeting_process`, `meeting_briefing`
+**Steward** (2): `memory_audit`, `memory_briefing`
 
 ## Module Structure
 
 ### Core
-- `src/store.ts` — CortexStore facade: integrates DB, hive, team, connectors
+- `src/store.ts` — CortexStore facade: integrates DB, hive, team, connectors, enrichment
 - `src/db/database.ts` — HiveDatabase: SQLite operations (sync API, better-sqlite3)
-- `src/db/schema.ts` — SQLite schema definition (7 tables, FTS5, triggers)
+- `src/db/schema.ts` — SQLite schema definition (8 tables incl. entity_aliases, FTS5, triggers)
 - `src/db/migrate-v2.ts` — JSON → SQLite migration
 - `src/db/adapter.ts` — AsyncHiveDb: async wrapper with extended helpers
 - `src/types.ts` — All TypeScript types (v2 + v3)
@@ -64,16 +68,35 @@ Stores entities (decisions, learnings, documents, conversations, people) in a SQ
 - `src/connectors/github.ts` — GitHub: PRs, Issues, ADRs, CODEOWNERS
 - `src/connectors/slack.ts` — Slack: signal-filtered messages + threads
 - `src/connectors/notion.ts` — Notion: pages, databases, block content
+- `src/connectors/calendar.ts` — Google Calendar: events, attendees (OAuth2/service account)
 
 ### Team (Phase 2)
 - `src/team/git-sync.ts` — Git-based team cortex (per-entry JSON files)
 
+### Enrichment
+- `src/enrichment/engine.ts` — EnrichmentEngine: orchestrates providers, batch processing
+- `src/enrichment/entity-resolver.ts` — EntityResolver: cross-source person deduplication
+- `src/enrichment/types.ts` — EnrichmentProvider interface, BatchFilter, BatchResult
+- `src/enrichment/providers/` — classify.ts, decision-extractor.ts, llm-enrich.ts, topic-stitch.ts
+- `src/enrichment/llm/` — anthropic.ts, openai.ts, ollama.ts, budget.ts, index.ts
+- `src/enrichment/eval/` — decision-eval.ts, eval.ts (provider evaluation harness)
+
+### Meeting
+- `src/meeting/agent.ts` — MeetingAgent: transcript processing + pre-briefing generation
+- `src/meeting/transcript-parser.ts` — Speaker-turn transcript parser (plain text + SRT)
+
+### Steward
+- `src/steward/index.ts` — MemorySteward: data quality audit + daily/weekly briefings
+
 ### Tools
-- `src/tools/index.ts` — Tool registration (all 24 tools)
+- `src/tools/index.ts` — Tool registration (all 30 tools)
 - `src/tools/browse-tools.ts` — ls, tree, grep, inspect, timeline
 - `src/tools/trail-tools.ts` — trail, who, decay
 - `src/tools/connector-tools.ts` — sync, status
 - `src/tools/team-tools.ts` — init, push, pull, status
+- `src/tools/context-tools.ts` — context_enrich, entity_resolve
+- `src/tools/meeting-tools.ts` — meeting_process, meeting_briefing
+- `src/tools/steward-tools.ts` — memory_audit, memory_briefing
 - `src/tools/memory-tools.ts`, `project-tools.ts`, `session-tools.ts` (v2)
 
 ### Hooks
@@ -92,6 +115,10 @@ hive-memory team init <path>   # Initialize team cortex
 hive-memory team push/pull     # Team sync
 hive-memory hook session-end   # Auto session capture
 hive-memory cleanup            # Remove expired entries
+hive-memory enrich             # Run enrichment batch (--since, --type, --limit)
+hive-memory meeting <file>     # Process meeting transcript (--title, --output)
+hive-memory audit              # Run memory data quality audit
+hive-memory briefing           # Generate daily/weekly briefing (--type daily|weekly)
 ```
 
 ## Conventions
