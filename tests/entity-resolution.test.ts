@@ -213,6 +213,56 @@ describe("EntityResolver", () => {
   });
 });
 
+describe("RES-02: Schema migration — entity_aliases table", () => {
+  it("creates the entity_aliases table on HiveDatabase construction", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "hive-schema-test-"));
+    const db = new HiveDatabase(join(tmpDir, "test.db"));
+    // If the table doesn't exist, this query would throw
+    const row = db.getAliases("nonexistent-id");
+    expect(Array.isArray(row)).toBe(true);
+    db.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("UNIQUE(alias_system, alias_value) constraint prevents duplicate aliases", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "hive-unique-alias-test-"));
+    const db = new HiveDatabase(join(tmpDir, "test.db"));
+
+    const entity = createPerson(db, {
+      id: "constraint-test-entity",
+      title: "Constraint Test",
+      sourceSystem: "test",
+    });
+
+    // First insert should succeed
+    const first = db.upsertAlias({
+      canonicalId: entity.id,
+      aliasSystem: "slack",
+      aliasValue: "slack:unique-user",
+      aliasType: "handle",
+      confidence: "confirmed",
+    });
+    expect(first).toBe(true);
+
+    // Second insert with same alias_system + alias_value should be a no-op (returns false)
+    const second = db.upsertAlias({
+      canonicalId: entity.id,
+      aliasSystem: "slack",
+      aliasValue: "slack:unique-user",
+      aliasType: "handle",
+      confidence: "confirmed",
+    });
+    expect(second).toBe(false);
+
+    // Only one alias should exist
+    const aliases = db.getAliases(entity.id);
+    expect(aliases).toHaveLength(1);
+
+    db.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+});
+
 describe("HiveDatabase alias methods", () => {
   let db: HiveDatabase;
   let tmpDir: string;
@@ -272,6 +322,142 @@ describe("HiveDatabase alias methods", () => {
       confidence: "confirmed",
     });
     expect(inserted).toBe(false);
+  });
+});
+
+describe("RES-05: Expanded merge tests", () => {
+  let db: HiveDatabase;
+  let tmpDir: string;
+  let resolver: EntityResolver;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "hive-merge-test-"));
+    db = new HiveDatabase(join(tmpDir, "test.db"));
+    resolver = new EntityResolver(db);
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("merge creates alias for superseded entity's email attribute", () => {
+    const primary = createPerson(db, {
+      id: "primary-email-test",
+      title: "Frank Primary",
+      email: "frank@primary.com",
+      sourceSystem: "slack",
+      externalId: "slack:frank",
+    });
+    const superseded = createPerson(db, {
+      id: "superseded-email-test",
+      title: "Frank S.",
+      email: "frank@superseded.com",
+      sourceSystem: "github",
+      externalId: "github:frank",
+    });
+
+    resolver.merge(primary.id, superseded.id);
+
+    const aliases = resolver.getAliases(primary.id);
+    const emailAlias = aliases.find(
+      (a) => a.aliasType === "email" && a.aliasValue === "frank@superseded.com",
+    );
+    expect(emailAlias).toBeDefined();
+  });
+
+  it("merge moves incoming synapses to superseded entity → primary", () => {
+    const primary = createPerson(db, {
+      id: "primary-incoming",
+      title: "Grace Primary",
+      sourceSystem: "slack",
+    });
+    const superseded = createPerson(db, {
+      id: "superseded-incoming",
+      title: "Grace S.",
+      sourceSystem: "github",
+      externalId: "github:grace",
+    });
+    const other = createPerson(db, {
+      id: "other-entity",
+      title: "Other Entity",
+      sourceSystem: "calendar",
+    });
+
+    // Create an incoming synapse: other → superseded
+    db.upsertSynapse({
+      sourceId: other.id,
+      targetId: superseded.id,
+      axon: "related",
+      weight: 0.7,
+    });
+
+    resolver.merge(primary.id, superseded.id);
+
+    // The incoming synapse should now point to primary
+    const incomingSynapses = db.getSynapsesByEntry(primary.id, "incoming", "related");
+    expect(incomingSynapses).toHaveLength(1);
+    expect(incomingSynapses[0].source).toBe(other.id);
+  });
+});
+
+describe("RES-13: E2E entity resolution test", () => {
+  let db: HiveDatabase;
+  let tmpDir: string;
+  let resolver: EntityResolver;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "hive-e2e-test-"));
+    db = new HiveDatabase(join(tmpDir, "test.db"));
+    resolver = new EntityResolver(db);
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("full E2E: two persons with same email are found, merged, superseded archived, aliases created", () => {
+    // Create two person entities with the same email from different sources
+    const personA = createPerson(db, {
+      id: "e2e-person-a",
+      title: "Helen Anderson",
+      email: "helen@example.com",
+      sourceSystem: "slack",
+      externalId: "slack:helen",
+    });
+    const personB = createPerson(db, {
+      id: "e2e-person-b",
+      title: "Helen A.",
+      email: "helen@example.com",
+      sourceSystem: "github",
+      externalId: "github:helen",
+    });
+
+    // findCandidates should find personA as exact_email match for personB
+    const candidates = resolver.findCandidates(personB);
+    expect(candidates.length).toBeGreaterThanOrEqual(1);
+    const emailMatch = candidates.find((c) => c.matchType === "exact_email");
+    expect(emailMatch).toBeDefined();
+    expect(emailMatch!.entity.id).toBe(personA.id);
+
+    // Merge: personA is primary, personB is superseded
+    const mergeResult = resolver.merge(personA.id, personB.id);
+    expect(mergeResult.primaryId).toBe(personA.id);
+    expect(mergeResult.supersededId).toBe(personB.id);
+
+    // Superseded entity should be archived
+    const supersededEntity = db.getEntity(personB.id)!;
+    expect(supersededEntity.status).toBe("archived");
+    expect(supersededEntity.supersededBy).toBe(personA.id);
+
+    // Aliases should exist on primary (at minimum for externalId and email)
+    const aliases = resolver.getAliases(personA.id);
+    expect(aliases.length).toBeGreaterThanOrEqual(1);
+    const externalIdAlias = aliases.find(
+      (a) => a.aliasType === "external_id" && a.aliasValue === "github:helen",
+    );
+    expect(externalIdAlias).toBeDefined();
   });
 });
 

@@ -1,14 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { HiveDatabase } from "../src/db/database.js";
 import { EnrichmentEngine } from "../src/enrichment/engine.js";
 import { ClassifyProvider } from "../src/enrichment/providers/classify.js";
+import { LLMEnrichProvider } from "../src/enrichment/providers/llm-enrich.js";
 import type {
   Entity,
   EnrichmentContext,
   EnrichmentProvider,
   EnrichmentResult,
   EntityType,
+  LLMProvider,
 } from "../src/enrichment/types.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -359,5 +361,36 @@ describe("HiveDatabase enrichment methods", () => {
       "decision",
       "memory",
     ]);
+  });
+});
+
+describe("LLMEnrichProvider", () => {
+  it("sets attributes.summary from mocked llm.extract response", async () => {
+    const provider = new LLMEnrichProvider();
+
+    const mockLlm: LLMProvider = {
+      model: "mock-model",
+      complete: vi.fn(),
+      extract: vi.fn().mockResolvedValue({
+        summary: "Short summary of the entity content",
+        domain: "code",
+      }),
+    };
+
+    const entity = {
+      id: randomUUID(),
+      entityType: "memory" as const,
+      content:
+        "This is a long enough piece of content that exceeds one hundred characters so that the LLM provider will agree to enrich it.",
+      attributes: {},
+    } as unknown as Entity;
+
+    const ctx = { llm: mockLlm } as unknown as EnrichmentContext;
+
+    const result = await provider.enrich(entity, ctx);
+
+    expect(result.attributes?.summary).toBeDefined();
+    expect(typeof result.attributes?.summary).toBe("string");
+    expect((result.attributes?.summary as string).length).toBeLessThan(100);
   });
 });
