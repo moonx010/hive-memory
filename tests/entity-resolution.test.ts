@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { HiveDatabase } from "../src/db/database.js";
 import { EntityResolver, levenshtein } from "../src/enrichment/entity-resolver.js";
@@ -17,7 +18,7 @@ function createPerson(
     externalId?: string;
   },
 ): Entity {
-  const id = opts.id ?? crypto.randomUUID();
+  const id = opts.id ?? randomUUID();
   const now = new Date().toISOString();
   const entity: Entity = {
     id,

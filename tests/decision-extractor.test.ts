@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { HiveDatabase } from "../src/db/database.js";
 import { EnrichmentEngine } from "../src/enrichment/engine.js";
@@ -18,7 +19,7 @@ function createTestEntity(
   db: HiveDatabase,
   overrides: Partial<Entity> = {},
 ): Entity {
-  const id = crypto.randomUUID();
+  const id = randomUUID();
   const now = new Date().toISOString();
   const entity: Entity = {
     id,
