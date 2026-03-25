@@ -57,6 +57,18 @@ describe("CalendarConnector", () => {
       expect(c.isConfigured()).toBe(false);
       delete process.env.GOOGLE_CALENDAR_CREDENTIALS;
     });
+
+    it("returns true when env var points to an existing file (CAL-16)", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "hive-cal-creds-test-"));
+      const credFile = join(tmpDir, "credentials.json");
+      writeFileSync(credFile, JSON.stringify({ type: "service_account" }));
+      process.env.GOOGLE_CALENDAR_CREDENTIALS = credFile;
+      const c = new CalendarConnector();
+      const configured = c.isConfigured();
+      delete process.env.GOOGLE_CALENDAR_CREDENTIALS;
+      rmSync(tmpDir, { recursive: true, force: true });
+      expect(configured).toBe(true);
+    });
   });
 
   describe("transform", () => {
@@ -190,6 +202,32 @@ describe("CalendarConnector", () => {
 
       const meeting = drafts.find((d) => d.entityType === "meeting");
       expect(meeting!.attributes.meetingType).toBe("large-meeting");
+    });
+
+    it("produces correct entity counts for 5 events (CAL-15 pagination)", () => {
+      const events = Array.from({ length: 5 }, (_, i) =>
+        makeEvent({
+          id: `evt-multi-${i}`,
+          summary: `Event ${i}`,
+          attendees: [
+            { email: `host${i}@example.com`, displayName: `Host ${i}`, responseStatus: "accepted" },
+            { email: `guest${i}@example.com`, displayName: `Guest ${i}`, responseStatus: "accepted" },
+            { email: `extra${i}@example.com`, displayName: `Extra ${i}`, responseStatus: "accepted" },
+          ],
+        }),
+      );
+
+      const allDrafts = events.flatMap((event) =>
+        connector.transform(makeRawDoc(event, "primary")),
+      );
+
+      // Each event produces 1 meeting + 3 person entities = 4 drafts × 5 events = 20 total
+      // But persons are deduplicated per-transform call, so each call yields 1 meeting + 3 persons
+      const meetings = allDrafts.filter((d) => d.entityType === "meeting");
+      const persons = allDrafts.filter((d) => d.entityType === "person");
+
+      expect(meetings).toHaveLength(5);
+      expect(persons).toHaveLength(15); // 3 unique persons per event, 5 events
     });
   });
 

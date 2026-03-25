@@ -42,7 +42,7 @@
 │   └─────────┘ └──────────┘ └─────────┘ └─────────────┘          │
 │                                                                   │
 └───────────────────────────────┬───────────────────────────────────┘
-                                │ MCP Tools (24개)
+                                │ MCP Tools (30개)
 ┌───────────────────────────────┼───────────────────────────────────┐
 │             Layer 1: Memory System (Hive-Memory v3)                │
 │                               │                                    │
@@ -54,12 +54,12 @@
 │   ┌────▼────┐ ┌───▼───┐ ┌───▼───┐ ┌───▼────┐                    │
 │   │Entities │ │Synapse│ │Spread │ │Hebbian │                    │
 │   │12 types │ │Graph  │ │Activ- │ │Learning│                    │
-│   │FTS5 BM25│ │14 axon│ │ation  │ │LTP/LTD │                    │
+│   │FTS5 BM25│ │15 axon│ │ation  │ │LTP/LTD │                    │
 │   └────┬────┘ └───────┘ └───────┘ └────────┘                    │
 │        │                                                          │
 │   ┌────▼────────────────────────────────────────────────────┐    │
 │   │              Connectors                                  │    │
-│   │  GitHub | Slack | Notion | Calendar (미구현)              │    │
+│   │  GitHub | Slack | Notion | Calendar (✅ 구현)              │    │
 │   └──────────────────────────────────────────────────────────┘    │
 │                                                                    │
 └────────────────────────────────────────────────────────────────────┘
@@ -83,10 +83,10 @@
 
 - 외부 데이터 소스로부터 raw 데이터 수집 (Connector)
 - Entity 기반 지식 저장 및 검색 (SQLite + FTS5)
-- Synapse 기반 그래프 관계 관리 (14 axon types)
+- Synapse 기반 그래프 관계 관리 (15 axon types)
 - Hebbian learning을 통한 자동 관계 강화/약화
 - 팀 간 지식 공유 (Git-based team sync)
-- AI Agent에게 24개 MCP tool 제공
+- AI Agent에게 30개 MCP tool 제공
 
 ### 2.2 현재 구현 상태
 
@@ -94,31 +94,33 @@
 |---------|------|------|
 | SQLite + FTS5 + WAL | :white_check_mark: 완료 | `~/.cortex/cortex.db` |
 | Entity model (12 types) | :white_check_mark: 완료 | entities table |
-| Synapse graph (14 axon types) | :white_check_mark: 완료 | synapses table |
+| Synapse graph (15 axon types) | :white_check_mark: 완료 | synapses table |
 | Hebbian learning (LTP/LTD) | :white_check_mark: 완료 | coactivations table |
 | Spreading activation | :white_check_mark: 완료 | beam search + graph traversal |
 | FTS5 BM25 + RRF fusion | :white_check_mark: 완료 | keyword + graph 결합 검색 |
-| 24 MCP tools | :white_check_mark: 완료 | 7개 카테고리 |
+| 30 MCP tools | :white_check_mark: 완료 | 10개 카테고리 |
 | GitHub connector | :white_check_mark: 완료 | PR, Issue, ADR, CODEOWNERS |
 | Slack connector | :white_check_mark: 완료 | signal-filtered messages + threads |
 | Notion connector | :white_check_mark: 완료 | pages, databases, block content |
-| Calendar connector | :x: 미구현 | Google Calendar / Outlook 필요 |
+| Calendar connector | :white_check_mark: 완료 | Google Calendar (OAuth2/service account) |
 | Git-based team sync | :white_check_mark: 완료 | per-entry JSON files |
 | v2 -> v3 migration | :white_check_mark: 완료 | JSON -> SQLite auto-migration |
 | SessionEnd hook | :white_check_mark: 완료 | JSONL transcript parsing |
-| CLI commands | :white_check_mark: 완료 | store, recall, status, sync, team, hook, cleanup, stats |
+| CLI commands | :white_check_mark: 완료 | store, recall, status, sync, enrich, meeting, audit, briefing, team, hook, cleanup, stats |
+| Enrichment engine | :white_check_mark: 완료 | rule/llm/off 모드, batch processing, LLM budget cap |
+| Entity deduplication | :white_check_mark: 완료 | entity_aliases table + EntityResolver |
+| Meeting processing | :white_check_mark: 완료 | transcript parser + MeetingAgent (CLI + MCP) |
+| Memory Steward | :white_check_mark: 완료 | data quality audit + daily/weekly briefings (CLI + MCP) |
 
 ### 2.3 남은 작업
 
 | 작업 | 우선순위 | 예상 규모 | 비고 |
 |------|---------|----------|------|
-| Calendar connector (Google Calendar) | P1 | 1주 | OAuth2 flow 필요. ConnectorPlugin interface 준수 |
 | Calendar connector (Outlook/Exchange) | P2 | 1주 | Microsoft Graph API |
-| Entity deduplication | P1 | 2-3일 | source_external_id 기반 upsert 보강 |
-| Connector error recovery | P2 | 2-3일 | 현재 에러 시 중단. partial sync resume 필요 |
+| Meeting Agent Slack/Notion output | P2 | 2-3일 | CLI/MCP 구현 완료. Slack 공유 + Notion 페이지 생성 미구현 |
 | Batch synapse creation 성능 | P3 | 1일 | 대량 import 시 transaction batching 최적화 |
 
-### 2.4 제공하는 인터페이스 (MCP Tools 24개)
+### 2.4 제공하는 인터페이스 (MCP Tools 30개)
 
 #### Project (4 tools)
 
@@ -179,6 +181,27 @@
 | `team_pull` | git repo에서 local DB로 pull | - |
 | `team_status` | local DB <-> team cortex 동기화 상태 조회 | - |
 
+#### Context (2 tools)
+
+| Tool | 설명 | 주요 파라미터 |
+|------|------|-------------|
+| `context_enrich` | Entity 메타데이터 추출, 분류, 관계 추론 (rule/llm 모드) | scope, entityId, entityType, since, limit |
+| `entity_resolve` | Cross-source person 중복 탐지 및 병합 | action, entityId, mergeIntoId, confirmed |
+
+#### Meeting (2 tools)
+
+| Tool | 설명 | 주요 파라미터 |
+|------|------|-------------|
+| `meeting_process` | 회의 transcript에서 결정/action item 추출, 구조화된 회의록 생성 | transcriptPath, title, date, attendees, calendarEventId |
+| `meeting_briefing` | 사전 브리핑 생성 (참석자 컨텍스트, 관련 결정, 미완료 action items) | title, attendees, topics |
+
+#### Steward (2 tools)
+
+| Tool | 설명 | 주요 파라미터 |
+|------|------|-------------|
+| `memory_audit` | 데이터 품질 감사 (중복, stale, orphan, unconfirmed 탐지) | - |
+| `memory_briefing` | 일간/주간 메모리 활동 브리핑 생성 | period |
+
 ### 2.5 데이터 모델
 
 #### Entity Types (12)
@@ -224,11 +247,11 @@ entities (
 code | documents | conversations | meetings | incidents | product | operations
 ```
 
-#### Axon Types (14)
+#### Axon Types (15)
 
 ```
 v2 (7): temporal, causal, semantic, refinement, conflict, dependency, derived
-v3 (7): authored, attended, mentioned, contains, supersedes, implements, belongs_to
+v3 (8): authored, attended, mentioned, contains, supersedes, implements, belongs_to, related
 ```
 
 #### Synapse Schema
@@ -238,7 +261,7 @@ synapses (
   id                TEXT PRIMARY KEY,
   source            TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
   target            TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-  axon              TEXT NOT NULL,        -- 14 axon types
+  axon              TEXT NOT NULL,        -- 15 axon types
   weight            REAL NOT NULL DEFAULT 0.3,  -- 0.0 ~ 1.0
   metadata          TEXT DEFAULT '{}',
   formed_at         TEXT NOT NULL,
@@ -328,28 +351,31 @@ Full sync: 전체 accessible pages
 Incremental sync: last_edited_time 기반
 ```
 
-#### Calendar Connector (미구현)
+#### Calendar Connector (✅ 구현 완료 — Google Calendar)
 
 ```
-대상: Google Calendar, Microsoft Outlook/Exchange
-수집 예정: 회의 일정, 참석자, 첨부 링크, recurring event
-entity_type: event, meeting
-필요 사항: OAuth2 flow, token refresh, CalDAV or REST API
-우선순위: P1 (Phase 1 목표)
+환경변수: GOOGLE_CALENDAR_CREDENTIALS, GOOGLE_CALENDAR_TOKEN (optional), GOOGLE_CALENDAR_IDS (optional)
+수집 대상:
+  - 회의 일정 -> entity_type: meeting
+  - 이벤트 -> entity_type: event
+  - 참석자 -> entity_type: person (attendees mapping)
+동작 방식: Google Calendar REST API, OAuth2 or service account 인증
+Full sync: 향후 90일 이벤트
+미구현: Microsoft Outlook/Exchange (Microsoft Graph API, P2)
 ```
 
 ### 2.7 이 레이어가 하지 않는 것
 
 | 하지 않는 것 | 이유 | 담당 레이어 |
 |-------------|------|-----------|
-| **비정형 텍스트에서 decision/action 추출** | LLM 추론 필요 | Layer 2 |
-| **Cross-source topic stitching** | Semantic understanding 필요 | Layer 2 |
-| **Entity resolution (사람 매핑)** | 이름 변형/별칭 해석 필요 | Layer 2 |
+| **비정형 텍스트에서 decision/action 추출 (LLM)** | LLM 추론 필요 (rule-based는 Layer 1 내 enrichment로 가능) | Layer 2 |
+| **Cross-source topic stitching (semantic)** | Semantic understanding 필요 (keyword 기반은 FTS5로 가능) | Layer 2 |
 | **Working pattern 분석** | 통계 분석 + 추론 필요 | Layer 2 or 별도 |
-| **회의 요약 생성** | LLM 추론 필요 | Layer 3 |
-| **주기적 briefing 생성** | Agent orchestration 필요 | Layer 3 |
+| **Slack/Notion으로 회의록 공유** | 외부 서비스 write 필요 | Layer 3 |
 | **업무 프로세스 개선 제안** | 복합 분석 필요 | Layer 3 |
 | **사용자 인증/인가** | 현재 로컬 전용 | 추후 결정 |
+
+> **참고**: Entity resolution, meeting transcript 처리, data quality audit, daily/weekly briefing은 v3에서 Layer 1 내 기능으로 구현되었음 (LLM 없이 rule-based로 동작).
 
 ---
 
@@ -753,10 +779,10 @@ Workflow Advisor는 Layer 2의 Entity Resolution + Topic Stitching이 충분히 
 
 | Memory Type | Layer | 현재 상태 | 필요한 작업 |
 |---|---|---|---|
-| **Artifact Memory** (문서, 코드, 대화 원본) | Layer 1 (Hive-Memory) | :white_check_mark: GitHub/Slack/Notion connector 동작 | Calendar connector 추가 |
-| **Decision Memory** (결정 사항) | Layer 1 (저장) + Layer 2 (추출) | :large_orange_diamond: explicit만 (패턴 매칭) | Layer 2에서 LLM 기반 추출 |
-| **Action Memory** (해야 할 일) | Layer 1 (저장) + Layer 2 (추출) | :x: 미구현 | Layer 2에서 action item extraction 구현 |
-| **Topic Thread Memory** (주제별 맥락) | Layer 1 (trail tool) + Layer 2 (stitching) | :large_orange_diamond: FTS5 기반만 | Layer 2에서 semantic stitching |
+| **Artifact Memory** (문서, 코드, 대화 원본) | Layer 1 (Hive-Memory) | :white_check_mark: GitHub/Slack/Notion/Calendar connector 동작 | Outlook connector 추가 |
+| **Decision Memory** (결정 사항) | Layer 1 (저장 + rule-based 추출) + Layer 2 (LLM 추출) | :white_check_mark: rule-based + MeetingAgent transcript 추출 동작 | Layer 2에서 LLM 기반 추출 고도화 |
+| **Action Memory** (해야 할 일) | Layer 1 (저장 + rule-based 추출) + Layer 2 (LLM 추출) | :white_check_mark: MeetingAgent에서 action item 추출 동작 | Layer 2에서 LLM 기반 추출 고도화 |
+| **Topic Thread Memory** (주제별 맥락) | Layer 1 (trail tool) + Layer 2 (stitching) | :white_check_mark: FTS5 + topic_stitch provider 동작 | Layer 2에서 semantic stitching 고도화 |
 | **Working Pattern Memory** (업무 패턴) | Layer 2 or 별도 Analytics | :x: 미구현 | 별도 논의 필요 (Phase 3+ 이후) |
 
 ### 5.2 Integration별 매핑
@@ -765,7 +791,7 @@ Workflow Advisor는 Layer 2의 Entity Resolution + Topic Stitching이 충분히 
 |---|---|---|---|
 | **Slack** | Layer 1 (connector) | :white_check_mark: 동작 중 | signal filter 튜닝, thread context 개선 |
 | **Notion** | Layer 1 (connector) | :white_check_mark: 동작 중 | database property 매핑 개선 |
-| **Google Calendar** | Layer 1 (connector) | :x: 미구현 | OAuth2 + Calendar API 구현 (Phase 1) |
+| **Google Calendar** | Layer 1 (connector) | :white_check_mark: 동작 중 | OAuth2/service account 구현 완료 |
 | **Google Meet/Zoom** | Layer 3 (Meeting Agent) | :x: 미구현 | Transcript 연동 (Phase 3) |
 | **GitHub** | Layer 1 (connector) | :white_check_mark: 동작 중 | PR review comment 추가 수집 고려 |
 
@@ -773,8 +799,8 @@ Workflow Advisor는 Layer 2의 Entity Resolution + Topic Stitching이 충분히 
 
 | Agent | Layer | 현재 상태 | 비고 |
 |---|---|---|---|
-| **Meeting Agent** | Layer 3 (별도 프로젝트) | :x: 미구현 | Calendar connector (L1) + Decision extraction (L2) 선행 필요 |
-| **Memory Steward** | Layer 3 (별도 프로젝트) | :x: 미구현 | 기존 memory_decay tool 활용 가능 |
+| **Meeting Agent** | Layer 1 내 구현 (MCP + CLI) | :warning: 부분 구현 | transcript 처리 + 사전 브리핑 동작. Slack/Notion output 미구현 |
+| **Memory Steward** | Layer 1 내 구현 (MCP + CLI) | :white_check_mark: 동작 중 | data quality audit + daily/weekly briefing 구현 완료 |
 | **Workflow Advisor** | Layer 3 (별도 프로젝트) | :x: 미구현 | Entity Resolution (L2) + 충분한 데이터 축적 선행 필요 |
 
 ---
