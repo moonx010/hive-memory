@@ -1,0 +1,16 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:05.000
+<v Alice>Good morning everyone, let's start the standup.
+
+00:00:05.000 --> 00:00:15.000
+<v Bob>I've been working on the database migration. We decided to use PostgreSQL for the new service.
+
+00:00:15.000 --> 00:00:25.000
+<v Charlie>Action item: @alice will set up the CI pipeline by Friday.
+
+00:00:25.000 --> 00:00:35.000
+<v Alice>Sounds good. Going forward, our approach will be to containerize all services.
+
+00:00:35.000 --> 00:00:45.000
+<v Bob>[ ] Review the architecture document before the next meeting.

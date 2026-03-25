@@ -1,7 +1,8 @@
-import { appendFile } from "node:fs/promises";
+import { appendFile, writeFile } from "node:fs/promises";
 import type { CortexStore } from "./store.js";
 import type { MemoryCategory } from "./types.js";
 import { validateId } from "./store/io.js";
+import { MeetingAgent } from "./meeting/agent.js";
 
 interface CliArgs {
   command: string;
@@ -95,6 +96,9 @@ export async function handleCli(
       break;
     case "enrich":
       await handleEnrich(store, initStore, parsed);
+      break;
+    case "meeting":
+      await handleMeeting(store, initStore, parsed);
       break;
     default:
       printUsage();
@@ -299,6 +303,37 @@ async function handleEnrich(
   }
 }
 
+async function handleMeeting(
+  store: CortexStore,
+  initStore: () => Promise<void>,
+  args: CliArgs,
+): Promise<void> {
+  if (!args.content) {
+    console.error("Usage: hive-memory meeting <transcript-file> [--title <title>] [--output <file>]");
+    process.exit(1);
+  }
+
+  await initStore();
+  const agent = new MeetingAgent(store.database, store.enrichmentEngine);
+
+  const result = await agent.process({
+    transcriptPath: args.content,
+    title: args.query, // --query doubles as --title for meeting
+    date: args.since,
+  });
+
+  if (args.output) {
+    await writeFile(args.output, result.markdownOutput, "utf-8");
+    console.log(`Meeting notes written to ${args.output}`);
+  } else {
+    console.log(result.markdownOutput);
+  }
+
+  console.error(
+    `Processed meeting: ${result.decisionsCreated} decisions, ${result.actionsCreated} actions`,
+  );
+}
+
 function printUsage(): void {
   console.log(`Usage: hive-memory <command> [options]
 
@@ -310,6 +345,7 @@ Commands:
   sync      Sync external agent memory files
   cleanup   Remove expired entries
   enrich    Run enrichment on entities (--since, --type, --limit)
+  meeting   Process a meeting transcript (--title, --output)
 
   hook session-end    Auto-save session (Claude Code hook)
 
