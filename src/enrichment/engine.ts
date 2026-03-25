@@ -31,6 +31,14 @@ export class EnrichmentEngine {
     const entity = this.db.getEntity(entityId);
     if (!entity) throw new Error(`Entity not found: ${entityId}`);
 
+    // Skip re-enrichment if content hasn't changed since last enrichment
+    if (
+      entity.contentHash !== undefined &&
+      entity.contentHash === entity.attributes._enrichedContentHash
+    ) {
+      return [];
+    }
+
     const ctx: EnrichmentContext = {
       db: this.db,
       findRelated: (query, opts) =>
@@ -76,6 +84,7 @@ export class EnrichmentEngine {
       this.db.updateEntityAttributes(entityId, {
         _enrichedAt: new Date().toISOString(),
         _enrichedBy: enrichedBy,
+        _enrichedContentHash: entity.contentHash,
       });
     }
 

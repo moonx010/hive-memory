@@ -34,6 +34,7 @@ interface EntityRow {
   expires_at: string | null;
   status: string;
   superseded_by: string | null;
+  content_hash: string | null;
 }
 
 interface SynapseRow {
@@ -227,6 +228,7 @@ function rowToEntity(row: EntityRow): Entity {
     expiresAt: row.expires_at ?? undefined,
     status: row.status as Entity["status"],
     supersededBy: row.superseded_by ?? undefined,
+    contentHash: row.content_hash ?? undefined,
   };
 }
 
@@ -254,6 +256,7 @@ function entityToRow(entity: Entity): Record<string, unknown> {
     expires_at: entity.expiresAt ?? null,
     status: entity.status,
     superseded_by: entity.supersededBy ?? null,
+    content_hash: entity.contentHash ?? null,
   };
 }
 
@@ -326,6 +329,13 @@ function rowToConnector(row: ConnectorRow): ConnectorConfig {
   };
 }
 
+// ── Content hash helper ───────────────────────────────────────────────────────
+
+/** SHA-256 hex of content, truncated to first 16 chars. */
+export function computeContentHash(content: string): string {
+  return crypto.createHash("sha256").update(content).digest("hex").slice(0, 16);
+}
+
 // ── HiveDatabase ──────────────────────────────────────────────────────────────
 // Concrete synchronous implementation backed by better-sqlite3.
 // This is the main class — it is also used as the structural type for the
@@ -355,6 +365,9 @@ export class HiveDatabase {
   // ── Entity methods ──────────────────────────────────────────────────────────
 
   insertEntity(entity: Entity): void {
+    if (!entity.contentHash) {
+      entity.contentHash = computeContentHash(entity.content);
+    }
     const row = entityToRow(entity);
     this.db.prepare(`
       INSERT INTO entities (
@@ -362,22 +375,28 @@ export class HiveDatabase {
         tags, keywords, attributes,
         source_system, source_external_id, source_url, source_connector,
         author, visibility, domain, confidence,
-        created_at, updated_at, expires_at, status, superseded_by
+        created_at, updated_at, expires_at, status, superseded_by, content_hash
       ) VALUES (
         @id, @entity_type, @project, @namespace, @title, @content,
         @tags, @keywords, @attributes,
         @source_system, @source_external_id, @source_url, @source_connector,
         @author, @visibility, @domain, @confidence,
-        @created_at, @updated_at, @expires_at, @status, @superseded_by
+        @created_at, @updated_at, @expires_at, @status, @superseded_by, @content_hash
       )
     `).run(row);
   }
 
-  updateEntity(id: string, updates: Partial<Omit<Entity, "id">>): void {
+  updateEntity(id: string, updates: Partial<Omit<Entity, "id">>): { changed: boolean } {
     const existing = this.getEntity(id);
     if (!existing) throw new Error(`Entity not found: ${id}`);
 
     const merged: Entity = { ...existing, ...updates, id };
+
+    // Compute new content hash and compare with existing
+    const newHash = computeContentHash(merged.content);
+    const changed = newHash !== existing.contentHash;
+    merged.contentHash = newHash;
+
     const row = entityToRow(merged);
 
     this.db.prepare(`
@@ -401,9 +420,12 @@ export class HiveDatabase {
         updated_at = @updated_at,
         expires_at = @expires_at,
         status = @status,
-        superseded_by = @superseded_by
+        superseded_by = @superseded_by,
+        content_hash = @content_hash
       WHERE id = @id
     `).run(row);
+
+    return { changed };
   }
 
   deleteEntity(id: string): void {

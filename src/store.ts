@@ -478,6 +478,7 @@ export class CortexStore {
   async syncConnector(connectorId: string, full = false): Promise<{
     added: number;
     updated: number;
+    skipped: number;
     errors: number;
     lastError?: string;
   }> {
@@ -492,6 +493,7 @@ export class CortexStore {
     const db = this.database;
     let added = 0;
     let updated = 0;
+    let skipped = 0;
     let errors = 0;
     let lastError: string | undefined;
     const entityMap = new Map<string, string>(); // externalId → entityId
@@ -518,7 +520,7 @@ export class CortexStore {
               const draftStatus = draft.status ?? "active";
 
               if (existing) {
-                db.updateEntity(existing.id, {
+                const result = db.updateEntity(existing.id, {
                   title: draft.title,
                   content: draft.content,
                   tags: draft.tags,
@@ -527,7 +529,11 @@ export class CortexStore {
                   updatedAt: new Date().toISOString(),
                 });
                 entityMap.set(draft.source.externalId, existing.id);
-                updated++;
+                if (result.changed) {
+                  updated++;
+                } else {
+                  skipped++;
+                }
               } else {
                 const now = new Date().toISOString();
                 const keywords = this._extractKeywords(draft.content + " " + (draft.title ?? ""));
@@ -591,7 +597,7 @@ export class CortexStore {
         }
       }
 
-      return { added, updated, errors: errors + 1, lastError };
+      return { added, updated, skipped, errors: errors + 1, lastError };
     }
 
     // Post-sync hook for connector-specific synapse creation
@@ -610,7 +616,7 @@ export class CortexStore {
       syncCursor: connector.getCursor(),
     });
 
-    return { added, updated, errors, lastError };
+    return { added, updated, skipped, errors, lastError };
   }
 
   /** Simple keyword extraction (reuses hive-index logic) */

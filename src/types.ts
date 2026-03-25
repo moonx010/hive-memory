@@ -286,6 +286,7 @@ export interface Entity {
   expiresAt?: string;
   status: EntityStatus;
   supersededBy?: string;
+  contentHash?: string;
 }
 
 export interface ConnectorConfig {
