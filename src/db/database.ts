@@ -836,6 +836,16 @@ export class HiveDatabase {
     }));
   }
 
+  /** Find entity by source system + external ID (direct SQL, not FTS5). */
+  getByExternalId(system: string, externalId: string): Entity | null {
+    const row = this.db
+      .prepare(
+        "SELECT * FROM entities WHERE source_system = ? AND source_external_id = ? LIMIT 1",
+      )
+      .get(system, externalId) as EntityRow | undefined;
+    return row ? rowToEntity(row) : null;
+  }
+
   // ── Enrichment convenience methods ──────────────────────────────────────────
 
   /** Merge attributes into an existing entity (does not replace, only adds/overwrites keys). */

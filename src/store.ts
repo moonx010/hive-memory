@@ -475,6 +475,7 @@ export class CortexStore {
     const db = this.database;
     let added = 0;
     let updated = 0;
+    const entityMap = new Map<string, string>(); // externalId → entityId
 
     const cursor = full ? undefined : connector.getCursor();
     const gen = full ? connector.fullSync() : connector.incrementalSync(cursor);
@@ -484,7 +485,8 @@ export class CortexStore {
 
       for (const draft of drafts) {
         // Check for existing entity by source external ID (upsert)
-        const existing = this._findByExternalId(db, draft.source.system, draft.source.externalId);
+        const existing = db.getByExternalId(draft.source.system, draft.source.externalId);
+        const draftStatus = draft.status ?? "active";
 
         if (existing) {
           // Update existing entity
@@ -493,8 +495,10 @@ export class CortexStore {
             content: draft.content,
             tags: draft.tags,
             attributes: draft.attributes,
+            status: draftStatus as Entity["status"],
             updatedAt: new Date().toISOString(),
           });
+          entityMap.set(draft.source.externalId, existing.id);
           updated++;
         } else {
           // Insert new entity
@@ -517,12 +521,18 @@ export class CortexStore {
             confidence: draft.confidence,
             createdAt: now,
             updatedAt: now,
-            status: "active",
+            status: draftStatus as Entity["status"],
           };
           db.insertEntity(entity);
+          entityMap.set(draft.source.externalId, entity.id);
           added++;
         }
       }
+    }
+
+    // Post-sync hook for connector-specific synapse creation
+    if (connector.postSync) {
+      connector.postSync(db, entityMap);
     }
 
     // Update connector state
@@ -537,14 +547,6 @@ export class CortexStore {
     });
 
     return { added, updated };
-  }
-
-  /** Find entity by source system + external ID */
-  private _findByExternalId(db: HiveDatabase, system: string, externalId: string): Entity | null {
-    const results = db.searchEntities(externalId, { limit: 50 });
-    return results.find(e =>
-      e.source?.system === system && e.source?.externalId === externalId
-    ) ?? null;
   }
 
   /** Simple keyword extraction (reuses hive-index logic) */

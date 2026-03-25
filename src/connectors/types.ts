@@ -27,6 +27,10 @@ export interface ConnectorPlugin {
 
   /** Get the current sync cursor (ISO date or opaque string) */
   getCursor(): string | undefined;
+
+  /** Optional post-sync hook for creating synapses after all entities are upserted.
+   *  entityMap maps source.externalId → entity.id for all entities processed in this sync. */
+  postSync?(db: import("../db/database.js").HiveDatabase, entityMap: Map<string, string>): void;
 }
 
 export interface RawDocument {
@@ -51,6 +55,8 @@ export interface EntityDraft {
   author?: string;
   domain: string;
   confidence: "confirmed" | "inferred";
+  /** Optional status override (e.g., "archived" for cancelled events) */
+  status?: "active" | "superseded" | "archived";
 }
 
 export interface ConnectorRegistry {

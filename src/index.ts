@@ -44,6 +44,13 @@ function registerConnectors(store: CortexStore): void {
       registry.register(new NotionConnector());
     }).catch(() => {});
   }
+
+  // Google Calendar connector
+  if (process.env["GOOGLE_CALENDAR_CREDENTIALS"]) {
+    import("./connectors/calendar.js").then(({ CalendarConnector }) => {
+      registry.register(new CalendarConnector());
+    }).catch(() => {});
+  }
 }
 
 function createStore(): CortexStore {
