@@ -181,6 +181,66 @@ function executeActionItems(store: CortexStore): SlackBlock[] {
   return formatActionItems(items);
 }
 
+async function executeBriefing(store: CortexStore, query: string, person?: string): Promise<SlackBlock[]> {
+  const db = store.database;
+  const blocks: SlackBlock[] = [];
+
+  if (person) {
+    // Search for a specific person's activity
+    const results = await store.recallMemories(person, undefined, 10);
+    if (results.length > 0) {
+      blocks.push({ type: "header", text: { type: "plain_text", text: `Activity: ${person}` } });
+      for (const r of results.slice(0, 5)) {
+        const label = r.source ? `[${r.project}/${r.source}]` : `[${r.project}/${r.category ?? ""}]`;
+        blocks.push({
+          type: "section",
+          text: { type: "mrkdwn", text: `*${label}*\n${r.snippet.slice(0, 200)}` },
+        });
+      }
+    } else {
+      blocks.push({ type: "section", text: { type: "mrkdwn", text: `No activity found for "${person}"` } });
+    }
+  } else {
+    // General briefing
+    const { MemorySteward } = await import("../steward/index.js");
+    const steward = new MemorySteward(db);
+    const report = steward.briefing("daily");
+
+    blocks.push({ type: "header", text: { type: "plain_text", text: "Daily Briefing" } });
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: [
+          `*New entities:* ${report.newEntities}`,
+          `*Decisions:* ${report.newDecisions.length}`,
+          `*Pending actions:* ${report.pendingActions.length}`,
+        ].join("  |  "),
+      },
+    });
+
+    if (report.newDecisions.length > 0) {
+      blocks.push({ type: "section", text: { type: "mrkdwn", text: "*Recent Decisions:*" } });
+      for (const d of report.newDecisions.slice(0, 5)) {
+        blocks.push({ type: "section", text: { type: "mrkdwn", text: `• ${d.title.slice(0, 150)}` } });
+      }
+    }
+
+    if (report.pendingActions.length > 0) {
+      blocks.push({ type: "section", text: { type: "mrkdwn", text: "*Pending Actions:*" } });
+      for (const a of report.pendingActions.slice(0, 5)) {
+        blocks.push({ type: "section", text: { type: "mrkdwn", text: `☐ ${a.title.slice(0, 120)} — _${a.owner}_` } });
+      }
+    }
+  }
+
+  if (blocks.length === 0) {
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: "No recent activity found." } });
+  }
+
+  return blocks;
+}
+
 // ── Event handler ─────────────────────────────────────────────────────────────
 
 /**
@@ -219,7 +279,7 @@ export async function handleSlackEvent(
     if (/^\s*help\s*$/i.test(cleanText) || /^\s*도움\s*$/i.test(cleanText)) {
       blocks = formatHelp();
     } else {
-      const intent = parseIntent(text);
+      const intent = await parseIntent(text);
 
       switch (intent.intent) {
         case "recall":
@@ -233,6 +293,10 @@ export async function handleSlackEvent(
           break;
         case "action_items":
           blocks = executeActionItems(store);
+          break;
+        case "briefing":
+        case "summarize":
+          blocks = await executeBriefing(store, intent.query, intent.person);
           break;
         default:
           blocks = formatHelp();

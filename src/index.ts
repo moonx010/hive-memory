@@ -106,7 +106,7 @@ async function main() {
 
   // HTTP server mode
   if (process.env["CORTEX_HTTP"] === "true" || args.includes("--http")) {
-    const port = parseInt(process.env["CORTEX_PORT"] ?? "3179", 10);
+    const port = parseInt(process.env["PORT"] ?? process.env["CORTEX_PORT"] ?? "3179", 10);
     const authToken = process.env["CORTEX_AUTH_TOKEN"];
 
     const store = createStore();
@@ -197,6 +197,43 @@ async function main() {
     httpServer.listen(port, () => {
       console.error(`[cortex] HTTP MCP server listening on port ${port}`);
     });
+
+    // ── Auto-sync scheduler ───────────────────────────────────────────
+    const syncIntervalMs = parseInt(process.env["CORTEX_SYNC_INTERVAL_MIN"] ?? "30", 10) * 60 * 1000;
+    if (syncIntervalMs > 0) {
+      const runAutoSync = async () => {
+        for (const connector of store.connectors.list()) {
+          if (!connector.isConfigured()) continue;
+          try {
+            const result = await store.syncConnector(connector.id);
+            console.error(`[auto-sync] ${connector.id}: +${result.added} updated=${result.updated} errors=${result.errors}`);
+          } catch (err) {
+            console.error(`[auto-sync] ${connector.id} failed: ${err}`);
+          }
+        }
+        // Enrichment
+        try {
+          const enrichResult = await store.enrichBatch({ limit: 200, unenrichedOnly: true });
+          if (enrichResult.enriched > 0) {
+            console.error(`[auto-sync] enriched ${enrichResult.enriched}/${enrichResult.processed}`);
+          }
+        } catch (err) {
+          console.error(`[auto-sync] enrichment failed: ${err}`);
+        }
+      };
+
+      // First sync after 10s startup delay
+      setTimeout(() => {
+        runAutoSync().catch((err) => console.error(`[auto-sync] initial sync failed: ${err}`));
+      }, 10_000);
+
+      // Then every CORTEX_SYNC_INTERVAL_MIN minutes
+      setInterval(() => {
+        runAutoSync().catch((err) => console.error(`[auto-sync] periodic sync failed: ${err}`));
+      }, syncIntervalMs);
+
+      console.error(`[cortex] Auto-sync enabled: every ${syncIntervalMs / 60000} min`);
+    }
 
     return;
   }
