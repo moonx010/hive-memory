@@ -106,7 +106,7 @@ async function main() {
 
   // HTTP server mode
   if (process.env["CORTEX_HTTP"] === "true" || args.includes("--http")) {
-    const port = parseInt(process.env["CORTEX_PORT"] ?? "3179", 10);
+    const port = parseInt(process.env["PORT"] ?? process.env["CORTEX_PORT"] ?? "3179", 10);
     const authToken = process.env["CORTEX_AUTH_TOKEN"];
 
     const store = createStore();
