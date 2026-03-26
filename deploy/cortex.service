@@ -1,0 +1,20 @@
+[Unit]
+Description=Hive Memory (Cortex) MCP Server
+After=network.target
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/opt/hive-memory
+ExecStart=/usr/bin/node /opt/hive-memory/dist/index.js
+Environment=CORTEX_HTTP=true
+Environment=CORTEX_PORT=3179
+Environment=CORTEX_AUTH_TOKEN=changeme
+Environment=CORTEX_DATA_DIR=/opt/hive-memory/data
+Environment=CORTEX_ENRICHMENT=rule
+EnvironmentFile=-/opt/hive-memory/.env
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

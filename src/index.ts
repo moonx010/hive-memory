@@ -2,6 +2,8 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { createServer } from "node:http";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
@@ -99,6 +101,45 @@ const CLI_COMMANDS = new Set(["store", "recall", "status", "inject", "sync", "cl
 
 async function main() {
   const args = process.argv.slice(2);
+
+  // HTTP server mode
+  if (process.env["CORTEX_HTTP"] === "true" || args.includes("--http")) {
+    const port = parseInt(process.env["CORTEX_PORT"] ?? "3179", 10);
+    const authToken = process.env["CORTEX_AUTH_TOKEN"];
+
+    const store = createStore();
+    await store.init();
+    await registerConnectors(store);
+
+    const server = new McpServer({
+      name: "cortex",
+      version: pkg.version as string,
+    });
+
+    registerTools(server, store);
+
+    const httpServer = createServer(async (req, res) => {
+      if (authToken) {
+        const provided = req.headers.authorization?.replace("Bearer ", "");
+        if (provided !== authToken) {
+          res.writeHead(401);
+          res.end("Unauthorized");
+          return;
+        }
+      }
+
+      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+      res.on("close", () => { transport.close(); });
+      await server.connect(transport);
+      await transport.handleRequest(req, res);
+    });
+
+    httpServer.listen(port, () => {
+      console.error(`[cortex] HTTP MCP server listening on port ${port}`);
+    });
+
+    return;
+  }
 
   // CLI mode: hive-memory hook <subcommand> [args...]
   if (args[0] === "hook") {
