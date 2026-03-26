@@ -114,8 +114,9 @@ function tsToIso(ts: string): string {
 
 // ── API helpers ──────────────────────────────────────────────────────────────
 
-async function slackFetch(url: string, token: string): Promise<Response> {
+async function slackFetch(url: string, token: string, method = "GET"): Promise<Response> {
   const res = await fetch(url, {
+    method,
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
@@ -213,7 +214,25 @@ export class SlackConnector implements ConnectorPlugin {
       const data = (await res.json()) as SlackHistoryResponse;
 
       if (!data.ok) {
-        throw new Error(`Slack conversations.history error: ${data.error}`);
+        if (data.error === "not_in_channel") {
+          // Auto-join the channel and retry
+          await fetch("https://slack.com/api/conversations.join", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${this.token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ channel: channelId }),
+          });
+          const retryRes = await slackFetch(url, this.token);
+          const retryData = (await retryRes.json()) as SlackHistoryResponse;
+          if (!retryData.ok) {
+            throw new Error(`Slack conversations.history error after join: ${retryData.error}`);
+          }
+          Object.assign(data, retryData);
+        } else {
+          throw new Error(`Slack conversations.history error: ${data.error}`);
+        }
       }
 
       for (const msg of data.messages) {
