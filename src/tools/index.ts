@@ -11,6 +11,7 @@ import { registerContextTools } from "./context-tools.js";
 import { registerMeetingTools } from "./meeting-tools.js";
 import { registerStewardTools } from "./steward-tools.js";
 import { registerAdvisorTools } from "./advisor-tools.js";
+import { registerUserTools } from "./user-tools.js";
 
 export type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 export type ToolHandler = (args: Record<string, unknown>) => Promise<ToolResult>;
@@ -20,6 +21,12 @@ export type SafeToolFn = (
   schema: Record<string, z.ZodType>,
   handler: ToolHandler,
 ) => void;
+
+/** Mutable per-request user context set by HTTP auth middleware. */
+export interface UserContext {
+  userId?: string;
+  userName?: string;
+}
 
 function wrapHandler(handler: ToolHandler): ToolHandler {
   return async (args) => {
@@ -48,6 +55,7 @@ export function registerTools(
     ) => void;
   },
   store: CortexStore,
+  userContext?: UserContext,
 ) {
   const safeTool: SafeToolFn = (name, description, schema, handler) =>
     server.tool(name, description, schema, wrapHandler(handler));
@@ -56,8 +64,8 @@ export function registerTools(
 
   // v2 tools (existing — backward compatible)
   registerProjectTools(safeTool, store);
-  registerMemoryTools(safeTool, store);
-  registerSessionTools(safeTool, store);
+  registerMemoryTools(safeTool, store, userContext);
+  registerSessionTools(safeTool, store, userContext);
 
   // v3 new tools
   registerBrowseTools(safeTool, db);
@@ -68,4 +76,5 @@ export function registerTools(
   registerMeetingTools(safeTool, store);
   registerStewardTools(safeTool, store);
   registerAdvisorTools(safeTool, db);
+  registerUserTools(safeTool, db);
 }

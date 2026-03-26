@@ -1,3 +1,12 @@
+export interface User {
+  id: string;
+  name: string;
+  email?: string;
+  role: string;
+  createdAt: string;
+  status: string;
+}
+
 export interface ProjectEntry {
   id: string;
   name: string;

@@ -22,6 +22,13 @@ interface CliArgs {
   type?: string;
   stage?: string;
   resumeFrom?: string;
+  // connect command flags
+  url?: string;
+  key?: string;
+  target?: string;
+  tool?: string;
+  token?: string;
+  write?: boolean;
 }
 
 export function parseCliArgs(args: string[]): CliArgs {
@@ -66,6 +73,24 @@ export function parseCliArgs(args: string[]): CliArgs {
         break;
       case "--no-embed":
         // Legacy flag — ignored (embeddings removed)
+        break;
+      case "--url":
+        result.url = args[++i];
+        break;
+      case "--key":
+        result.key = args[++i];
+        break;
+      case "--target":
+        result.target = args[++i];
+        break;
+      case "--tool":
+        result.tool = args[++i];
+        break;
+      case "--token":
+        result.token = args[++i];
+        break;
+      case "--write":
+        result.write = true;
         break;
       default:
         // Positional argument = content (for store command)
@@ -126,6 +151,9 @@ export async function handleCli(
       break;
     case "patterns":
       await handlePatterns(store, initStore, parsed);
+      break;
+    case "connect":
+      await handleConnect(parsed);
       break;
     default:
       printUsage();
@@ -485,6 +513,96 @@ async function handleTranscribe(
   }
 }
 
+async function handleConnect(args: CliArgs): Promise<void> {
+  const { detectTool, generateMcpConfig, getConfigPath } = await import("./gateway/config-templates.js");
+  const { mergeConfig } = await import("./gateway/config-writer.js");
+  const { verifyConnection } = await import("./gateway/connect.js");
+
+  const serverUrl = args.url ?? "http://localhost:3179";
+  const apiKey = args.key ?? args.token ?? process.env["CORTEX_AUTH_TOKEN"] ?? "";
+
+  // Resolve tool
+  const rawTool = args.tool ?? args.target;
+  if (rawTool === "raw") {
+    // Raw JSON output mode
+    const config = generateMcpConfig(serverUrl, apiKey);
+    console.log(JSON.stringify({ cortex: config }, null, 2));
+    return;
+  }
+
+  let resolvedTool: "claude" | "cursor" | null;
+  if (rawTool === "claude" || rawTool === "claude-code") {
+    resolvedTool = "claude";
+  } else if (rawTool === "cursor") {
+    resolvedTool = "cursor";
+  } else {
+    resolvedTool = detectTool();
+  }
+
+  if (!resolvedTool) {
+    console.error("Could not auto-detect AI tool. Use --tool claude|cursor to specify.");
+    console.error("Install Claude Code or Cursor to use auto-detection.");
+    process.exit(1);
+  }
+
+  if (!apiKey) {
+    console.log(`Pass your API key with --key <key> (get one with: hive-memory user create <name>)`);
+    // Still show what the config would look like
+    const config = generateMcpConfig(serverUrl, "<your-api-key>");
+    const configPath = getConfigPath(resolvedTool);
+    console.log(`\nAdd this to your config (${configPath}):`);
+    console.log(JSON.stringify({ mcpServers: { cortex: config } }, null, 2));
+    return;
+  }
+
+  const serverConfig = generateMcpConfig(serverUrl, apiKey);
+  const configPath = getConfigPath(resolvedTool);
+  const toolLabel = resolvedTool === "claude" ? "Claude Code" : "Cursor";
+
+  if (args.write) {
+    // Check if cortex entry already exists
+    let hadExisting = false;
+    try {
+      const { existsSync, readFileSync } = await import("node:fs");
+      if (existsSync(configPath)) {
+        const existing = JSON.parse(readFileSync(configPath, "utf-8"));
+        hadExisting = Boolean(existing?.mcpServers?.cortex);
+      }
+    } catch {
+      // ignore parse errors
+    }
+
+    await mergeConfig(configPath, serverConfig);
+
+    console.log(`Hive Memory — MCP Gateway Setup\n`);
+    console.log(`Tool:   ${toolLabel}`);
+    console.log(`Server: ${serverUrl}\n`);
+    console.log(hadExisting ? `Updated existing cortex config in: ${configPath}` : `Config written to: ${configPath}`);
+    console.log(`\nWarning: Your API key is stored in plaintext.`);
+    console.log(`         Make sure ${configPath} is not committed to git.`);
+  } else {
+    // Dry-run: print config
+    const label = resolvedTool === "claude" ? `~/.claude/settings.json` : `~/.cursor/mcp.json`;
+    console.log(`Add this to your ${toolLabel} config (${label}):\n`);
+    console.log(JSON.stringify({ mcpServers: { cortex: serverConfig } }, null, 2));
+  }
+
+  // Connection verification (informational, never fails the command)
+  const reachable = await verifyConnection(serverUrl, apiKey);
+  if (reachable) {
+    console.log(`\nConnection verified — cortex MCP server is reachable.`);
+  } else {
+    console.log(`\nWarning: Could not reach the server at ${serverUrl}. Make sure it's running with --http flag.`);
+  }
+
+  console.log(`\nNext steps:`);
+  console.log(`  1. Restart your AI tool to pick up the new MCP server config.`);
+  console.log(`  2. Try: "project_status" to verify the connection.`);
+  if (resolvedTool === "cursor") {
+    console.log(`\nNote: .cursor/mcp.json may need to be in the project root for Cursor.`);
+  }
+}
+
 function printUsage(): void {
   console.log(`Usage: hive-memory <command> [options]
 
@@ -502,6 +620,7 @@ Commands:
   briefing  Generate daily/weekly briefing (--type daily|weekly)
   analyze   Analyze workflow patterns and generate insights
   patterns  Analyze aggregated working patterns (--since, --project)
+  connect   Generate MCP config for Claude Code or Cursor (--url, --key, --tool, --write)
 
   hook session-end    Auto-save session (Claude Code hook)
 

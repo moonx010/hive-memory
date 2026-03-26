@@ -1,6 +1,6 @@
 import type { Database } from "better-sqlite3";
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export function createSchema(db: Database): void {
   db.exec(`
@@ -157,6 +157,20 @@ export function createSchema(db: Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_entity_aliases_canonical ON entity_aliases(canonical_id);
     CREATE INDEX IF NOT EXISTS idx_entities_source_ext ON entities(source_system, source_external_id);
+
+    -- ── users (v4) ───────────────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS users (
+      id           TEXT PRIMARY KEY,
+      name         TEXT NOT NULL,
+      email        TEXT UNIQUE,
+      api_key_hash TEXT NOT NULL UNIQUE,
+      role         TEXT NOT NULL DEFAULT 'member',
+      created_at   TEXT NOT NULL,
+      status       TEXT NOT NULL DEFAULT 'active'
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_users_api_key_hash ON users(api_key_hash);
+    CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
   `);
 
   // v3 migration: add content_hash column to existing databases
