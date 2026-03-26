@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { HiveDatabase } from "../db/database.js";
 import { CheckpointManager } from "../connectors/checkpoint.js";
+import type { CortexStore } from "../store.js";
 import type { SafeToolFn } from "./index.js";
 
 // ── Helpers ──
@@ -21,7 +22,7 @@ function relativeTime(iso: string): string {
   return formatDate(iso);
 }
 
-export function registerConnectorTools(safeTool: SafeToolFn, db: HiveDatabase) {
+export function registerConnectorTools(safeTool: SafeToolFn, db: HiveDatabase, store?: CortexStore) {
   // ── connector_sync ──
 
   safeTool(
@@ -40,21 +41,29 @@ export function registerConnectorTools(safeTool: SafeToolFn, db: HiveDatabase) {
       const connectorId = args.connector as string;
       const full = (args.full as boolean | undefined) ?? false;
 
+      if (store) {
+        try {
+          const result = await store.syncConnector(connectorId, full);
+          const lines = [
+            `Sync complete: ${connectorId}`,
+            `Added: ${result.added}  |  Updated: ${result.updated}  |  Skipped: ${result.skipped}  |  Errors: ${result.errors}`,
+          ];
+          if (result.lastError) lines.push(`Last error: ${result.lastError}`);
+          return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+        } catch (err) {
+          return { content: [{ type: "text" as const, text: `Sync failed: ${err instanceof Error ? err.message : err}` }], isError: true };
+        }
+      }
+
+      // Fallback: just show status if store not available
       const connector = db.getConnector(connectorId);
-
-      const lines: string[] = [
-        `Connector sync triggered: ${connectorId}`,
-        `Mode: ${full ? "full" : "incremental"}`,
-        ``,
-      ];
-
+      const lines: string[] = [`Connector: ${connectorId}`];
       if (!connector) {
-        lines.push(`Connector "${connectorId}" not found.`);
+        lines.push(`Not found. Available connectors depend on environment variables.`);
       } else {
         const phase = connector.syncPhase ?? "initial";
         lines.push(`Status: ${connector.status}  |  Phase: ${phase}  |  Last sync: ${connector.lastSync ? relativeTime(connector.lastSync) : "never"}`);
       }
-
       return { content: [{ type: "text" as const, text: lines.join("\n") }] };
     },
   );

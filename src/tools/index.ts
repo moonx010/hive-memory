@@ -70,7 +70,7 @@ export function registerTools(
   // v3 new tools
   registerBrowseTools(safeTool, db);
   registerTrailTools(safeTool, db);
-  registerConnectorTools(safeTool, db);
+  registerConnectorTools(safeTool, db, store);
   registerTeamTools(safeTool, store);
   registerContextTools(safeTool, store);
   registerMeetingTools(safeTool, store);
