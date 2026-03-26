@@ -1188,6 +1188,56 @@ export class HiveDatabase {
     return rows.map(rowToEntity);
   }
 
+  // ── User methods ────────────────────────────────────────────────────────────
+
+  insertUser(user: { id: string; name: string; email?: string; apiKeyHash: string; role: string; createdAt: string; status: string }): void {
+    this.db.prepare(`
+      INSERT INTO users (id, name, email, api_key_hash, role, created_at, status)
+      VALUES (@id, @name, @email, @api_key_hash, @role, @created_at, @status)
+    `).run({
+      id: user.id,
+      name: user.name,
+      email: user.email ?? null,
+      api_key_hash: user.apiKeyHash,
+      role: user.role,
+      created_at: user.createdAt,
+      status: user.status,
+    });
+  }
+
+  getUserByApiKeyHash(hash: string): { id: string; name: string; email?: string; role: string; createdAt: string; status: string } | null {
+    const row = this.db
+      .prepare("SELECT * FROM users WHERE api_key_hash = ? AND status = 'active'")
+      .get(hash) as { id: string; name: string; email: string | null; api_key_hash: string; role: string; created_at: string; status: string } | undefined;
+    if (!row) return null;
+    return {
+      id: row.id,
+      name: row.name,
+      email: row.email ?? undefined,
+      role: row.role,
+      createdAt: row.created_at,
+      status: row.status,
+    };
+  }
+
+  listUsers(): { id: string; name: string; email?: string; role: string; createdAt: string; status: string }[] {
+    const rows = this.db
+      .prepare("SELECT * FROM users ORDER BY created_at ASC")
+      .all() as { id: string; name: string; email: string | null; api_key_hash: string; role: string; created_at: string; status: string }[];
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      email: row.email ?? undefined,
+      role: row.role,
+      createdAt: row.created_at,
+      status: row.status,
+    }));
+  }
+
+  updateUserStatus(userId: string, status: string): void {
+    this.db.prepare("UPDATE users SET status = ? WHERE id = ?").run(status, userId);
+  }
+
   // ── Lifecycle ───────────────────────────────────────────────────────────────
 
   close(): void {

@@ -2,9 +2,9 @@ import { z } from "zod";
 import type { CortexStore } from "../store.js";
 import type { MemoryCategory, AxonType } from "../types.js";
 import { validateId } from "../store/io.js";
-import type { SafeToolFn } from "./index.js";
+import type { SafeToolFn, UserContext } from "./index.js";
 
-export function registerMemoryTools(safeTool: SafeToolFn, store: CortexStore) {
+export function registerMemoryTools(safeTool: SafeToolFn, store: CortexStore, userContext?: UserContext) {
   safeTool(
     "memory_store",
     "Store a piece of knowledge, decision, or learning for a project. Auto-creates synapses (temporal, semantic, refinement) to related memories.",
@@ -17,15 +17,18 @@ export function registerMemoryTools(safeTool: SafeToolFn, store: CortexStore) {
     },
     async (args) => {
       validateId(args.project as string);
+      // If a user is authenticated, use their name as the author (entity attribution).
+      const agentArg = args.agent as string | undefined;
+      const resolvedAgent = userContext?.userName ?? agentArg;
       const entry = await store.storeMemory(
         args.project as string,
         args.category as MemoryCategory,
         args.content as string,
         (args.tags as string[] | undefined) ?? [],
-        args.agent as string | undefined,
+        resolvedAgent,
       );
       return {
-        content: [{ type: "text" as const, text: `Stored ${args.category} for ${args.project} (id: ${entry.id})${args.agent ? ` [agent: ${args.agent}]` : ""}` }],
+        content: [{ type: "text" as const, text: `Stored ${args.category} for ${args.project} (id: ${entry.id})${resolvedAgent ? ` [agent: ${resolvedAgent}]` : ""}` }],
       };
     },
   );

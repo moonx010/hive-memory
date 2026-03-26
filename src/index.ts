@@ -11,6 +11,8 @@ import { homedir } from "node:os";
 import { CortexStore } from "./store.js";
 import { registerTools } from "./tools.js";
 import { handleCli } from "./cli.js";
+import { resolveAuth } from "./auth.js";
+import { verifySlackSignature, handleSlackEvent } from "./bot/slack-bot.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
@@ -95,7 +97,7 @@ async function handleHook(args: string[]): Promise<void> {
 
 // --- CLI commands ---
 
-const CLI_COMMANDS = new Set(["store", "recall", "status", "inject", "sync", "cleanup", "stats", "team", "enrich", "meeting", "transcribe", "audit", "briefing", "analyze", "patterns"]);
+const CLI_COMMANDS = new Set(["store", "recall", "status", "inject", "sync", "cleanup", "stats", "team", "enrich", "meeting", "transcribe", "audit", "briefing", "analyze", "patterns", "connect", "user"]);
 
 // --- Main ---
 
@@ -116,17 +118,75 @@ async function main() {
       version: pkg.version as string,
     });
 
-    registerTools(server, store);
+    // Mutable context updated per-request before tool handlers are invoked.
+    const userContext = { userId: undefined as string | undefined, userName: undefined as string | undefined };
+    registerTools(server, store, userContext);
+
+    const slackBotEnabled = process.env["SLACK_BOT_ENABLED"] === "true";
+    const slackSigningSecret = process.env["SLACK_SIGNING_SECRET"] ?? "";
+    const slackToken = process.env["SLACK_TOKEN"] ?? "";
 
     const httpServer = createServer(async (req, res) => {
-      if (authToken) {
-        const provided = req.headers.authorization?.replace("Bearer ", "");
-        if (provided !== authToken) {
-          res.writeHead(401);
-          res.end("Unauthorized");
+      // ── Slack Events API route ──────────────────────────────────────────────
+      if (slackBotEnabled && req.url === "/slack/events" && req.method === "POST") {
+        // Collect body bytes (needed for signature verification)
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const body = Buffer.concat(chunks).toString();
+
+        // Parse payload
+        let payload: { type?: string; challenge?: string; event?: unknown };
+        try {
+          payload = JSON.parse(body) as typeof payload;
+        } catch {
+          res.writeHead(400);
+          res.end("Bad Request");
           return;
         }
+
+        // URL verification challenge (no signature required — Slack sends this during setup)
+        if (payload.type === "url_verification") {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ challenge: payload.challenge }));
+          return;
+        }
+
+        // Verify Slack signature
+        const timestamp = req.headers["x-slack-request-timestamp"] as string | undefined;
+        const signature = req.headers["x-slack-signature"] as string | undefined;
+
+        if (!timestamp || !signature || !verifySlackSignature(slackSigningSecret, timestamp, body, signature)) {
+          res.writeHead(401);
+          res.end("Invalid signature");
+          return;
+        }
+
+        // Ack immediately — Slack requires a response within 3 seconds
+        res.writeHead(200);
+        res.end();
+
+        // Process event asynchronously (after ack)
+        handleSlackEvent(
+          payload as Parameters<typeof handleSlackEvent>[0],
+          store,
+          slackToken,
+        ).catch((err: unknown) => {
+          console.error("[bumble-bee] Event handling error:", err);
+        });
+
+        return;
       }
+
+      // ── MCP route (default) ─────────────────────────────────────────────────
+      const { authorized, userId, userName } = resolveAuth(store.database, req.headers.authorization, authToken);
+      if (!authorized) {
+        res.writeHead(401);
+        res.end("Unauthorized");
+        return;
+      }
+      // Update shared context for this request's tool handlers.
+      userContext.userId = userId;
+      userContext.userName = userName;
 
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       res.on("close", () => { transport.close(); });
@@ -160,6 +220,14 @@ async function main() {
     const store = createStore();
     await store.init();
     await handleTeamCli(store, args.slice(1));
+    return;
+  }
+
+  // CLI mode: hive-memory user <subcommand> [args...]
+  if (args[0] === "user") {
+    const store = createStore();
+    await store.init();
+    await handleUserCli(store, args.slice(1));
     return;
   }
 
@@ -306,6 +374,76 @@ async function handleTeamCli(store: CortexStore, args: string[]): Promise<void> 
     default:
       console.error(`Unknown team subcommand: ${subcommand ?? "(none)"}`);
       console.error("Available: team init <path>, team push, team pull, team status");
+      process.exit(1);
+  }
+}
+
+// ── user command ──
+
+async function handleUserCli(store: CortexStore, args: string[]): Promise<void> {
+  const { createUser, listUsers, revokeUser } = await import("./auth.js");
+  const db = store.database;
+  const subcommand = args[0];
+
+  switch (subcommand) {
+    case "create": {
+      const name = args[1];
+      if (!name) {
+        console.error("Usage: hive-memory user create <name> [--email <email>]");
+        process.exit(1);
+      }
+      const emailIdx = args.indexOf("--email");
+      const email = emailIdx !== -1 ? args[emailIdx + 1] : undefined;
+      const { user, plaintextKey } = createUser(db, name, email);
+      console.log(`User created.`);
+      console.log(`  ID:    ${user.id}`);
+      console.log(`  Name:  ${user.name}`);
+      if (user.email) console.log(`  Email: ${user.email}`);
+      console.log(`\nAPI key (save this — it won't be shown again):`);
+      console.log(`  ${plaintextKey}`);
+      break;
+    }
+
+    case "list": {
+      const users = listUsers(db);
+      if (users.length === 0) {
+        console.log("No users found.");
+        break;
+      }
+      const header = "ID                                    Name            Email                        Status   Created";
+      console.log(header);
+      console.log("-".repeat(header.length));
+      for (const u of users) {
+        const id = u.id.padEnd(36);
+        const name = u.name.padEnd(15);
+        const email = (u.email ?? "").padEnd(28);
+        const status = u.status.padEnd(8);
+        const created = u.createdAt.slice(0, 10);
+        console.log(`${id}  ${name}  ${email}  ${status}  ${created}`);
+      }
+      break;
+    }
+
+    case "revoke": {
+      const userId = args[1];
+      if (!userId) {
+        console.error("Usage: hive-memory user revoke <user-id>");
+        process.exit(1);
+      }
+      const users = listUsers(db);
+      const user = users.find((u) => u.id === userId);
+      if (!user) {
+        console.error(`User not found: ${userId}`);
+        process.exit(1);
+      }
+      revokeUser(db, userId);
+      console.log(`User ${user.name} (${userId}) revoked.`);
+      break;
+    }
+
+    default:
+      console.error(`Unknown user subcommand: ${subcommand ?? "(none)"}`);
+      console.error("Available: user create <name> [--email <email>], user list, user revoke <id>");
       process.exit(1);
   }
 }
