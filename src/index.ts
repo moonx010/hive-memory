@@ -12,6 +12,7 @@ import { CortexStore } from "./store.js";
 import { registerTools } from "./tools.js";
 import { handleCli } from "./cli.js";
 import { resolveAuth } from "./auth.js";
+import { verifySlackSignature, handleSlackEvent } from "./bot/slack-bot.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
@@ -121,7 +122,62 @@ async function main() {
     const userContext = { userId: undefined as string | undefined, userName: undefined as string | undefined };
     registerTools(server, store, userContext);
 
+    const slackBotEnabled = process.env["SLACK_BOT_ENABLED"] === "true";
+    const slackSigningSecret = process.env["SLACK_SIGNING_SECRET"] ?? "";
+    const slackToken = process.env["SLACK_TOKEN"] ?? "";
+
     const httpServer = createServer(async (req, res) => {
+      // ── Slack Events API route ──────────────────────────────────────────────
+      if (slackBotEnabled && req.url === "/slack/events" && req.method === "POST") {
+        // Collect body bytes (needed for signature verification)
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const body = Buffer.concat(chunks).toString();
+
+        // Parse payload
+        let payload: { type?: string; challenge?: string; event?: unknown };
+        try {
+          payload = JSON.parse(body) as typeof payload;
+        } catch {
+          res.writeHead(400);
+          res.end("Bad Request");
+          return;
+        }
+
+        // URL verification challenge (no signature required — Slack sends this during setup)
+        if (payload.type === "url_verification") {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ challenge: payload.challenge }));
+          return;
+        }
+
+        // Verify Slack signature
+        const timestamp = req.headers["x-slack-request-timestamp"] as string | undefined;
+        const signature = req.headers["x-slack-signature"] as string | undefined;
+
+        if (!timestamp || !signature || !verifySlackSignature(slackSigningSecret, timestamp, body, signature)) {
+          res.writeHead(401);
+          res.end("Invalid signature");
+          return;
+        }
+
+        // Ack immediately — Slack requires a response within 3 seconds
+        res.writeHead(200);
+        res.end();
+
+        // Process event asynchronously (after ack)
+        handleSlackEvent(
+          payload as Parameters<typeof handleSlackEvent>[0],
+          store,
+          slackToken,
+        ).catch((err: unknown) => {
+          console.error("[bumble-bee] Event handling error:", err);
+        });
+
+        return;
+      }
+
+      // ── MCP route (default) ─────────────────────────────────────────────────
       const { authorized, userId, userName } = resolveAuth(store.database, req.headers.authorization, authToken);
       if (!authorized) {
         res.writeHead(401);
