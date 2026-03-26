@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { parseIntent, stripMention } from "../src/bot/intent-parser.js";
+import { parseIntentRegex as parseIntent, stripMention } from "../src/bot/intent-parser.js";
 import {
   formatRecallResults,
   formatHelp,
