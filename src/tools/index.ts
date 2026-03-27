@@ -76,5 +76,5 @@ export function registerTools(
   registerMeetingTools(safeTool, store);
   registerStewardTools(safeTool, store);
   registerAdvisorTools(safeTool, db);
-  registerUserTools(safeTool, db);
+  registerUserTools(safeTool, db, userContext);
 }

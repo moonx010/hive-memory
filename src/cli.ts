@@ -152,6 +152,12 @@ export async function handleCli(
     case "patterns":
       await handlePatterns(store, initStore, parsed);
       break;
+    case "import-slack":
+      await handleImportSlack(store, initStore, parsed);
+      break;
+    case "lifecycle":
+      await handleLifecycle(store, initStore, parsed);
+      break;
     case "connect":
       await handleConnect(parsed);
       break;
@@ -603,6 +609,58 @@ async function handleConnect(args: CliArgs): Promise<void> {
   }
 }
 
+async function handleImportSlack(
+  store: CortexStore,
+  initStore: () => Promise<void>,
+  args: CliArgs,
+): Promise<void> {
+  // The export directory is passed as the positional content arg
+  const exportDir = args.content;
+  if (!exportDir) {
+    console.error("Usage: hive-memory import-slack <export-dir>");
+    process.exit(1);
+  }
+
+  await initStore();
+  const { importSlackExport } = await import("./pipeline/slack-import.js");
+  const result = await importSlackExport(store.database, { exportDir });
+
+  console.log(`Slack import complete:`);
+  console.log(`  Channels: ${result.channels}`);
+  console.log(`  Messages: ${result.messages}`);
+  console.log(`  Users:    ${result.users}`);
+  console.log(`  Errors:   ${result.errors}`);
+  console.log(`  Duration: ${result.durationMs}ms`);
+}
+
+async function handleLifecycle(
+  store: CortexStore,
+  initStore: () => Promise<void>,
+  args: CliArgs,
+): Promise<void> {
+  const subcommand = args.content ?? "stats";
+
+  await initStore();
+  const { DataLifecycleManager } = await import("./pipeline/lifecycle.js");
+  const manager = new DataLifecycleManager(store.database);
+
+  if (subcommand === "run") {
+    const result = manager.runLifecycle();
+    console.log(`Lifecycle run complete:`);
+    console.log(`  Archived: ${result.archived}`);
+    console.log(`  Hot:      ${result.hotCount}`);
+    console.log(`  Warm:     ${result.warmCount}`);
+  } else {
+    // Default: stats
+    const stats = manager.getStats();
+    console.log(`Lifecycle stats:`);
+    console.log(`  Total active: ${stats.total}`);
+    console.log(`  Hot (< 30d):  ${stats.hot}`);
+    console.log(`  Warm:         ${stats.warm}`);
+    console.log(`  Archived:     ${stats.archived}`);
+  }
+}
+
 function printUsage(): void {
   console.log(`Usage: hive-memory <command> [options]
 
@@ -621,6 +679,8 @@ Commands:
   analyze   Analyze workflow patterns and generate insights
   patterns  Analyze aggregated working patterns (--since, --project)
   connect   Generate MCP config for Claude Code or Cursor (--url, --key, --tool, --write)
+  import-slack <dir>   Import Slack Enterprise Grid export
+  lifecycle [run|stats]   Data lifecycle management (archive old entities)
 
   hook session-end    Auto-save session (Claude Code hook)
 
