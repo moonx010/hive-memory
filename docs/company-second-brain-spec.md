@@ -42,7 +42,7 @@
 │   └─────────┘ └──────────┘ └─────────┘ └─────────────┘          │
 │                                                                   │
 └───────────────────────────────┬───────────────────────────────────┘
-                                │ MCP Tools (30개)
+                                │ MCP Tools (33개)
 ┌───────────────────────────────┼───────────────────────────────────┐
 │             Layer 1: Memory System (Hive-Memory v3)                │
 │                               │                                    │
@@ -86,7 +86,7 @@
 - Synapse 기반 그래프 관계 관리 (15 axon types)
 - Hebbian learning을 통한 자동 관계 강화/약화
 - 팀 간 지식 공유 (Git-based team sync)
-- AI Agent에게 30개 MCP tool 제공
+- AI Agent에게 33개 MCP tool 제공
 
 ### 2.2 현재 구현 상태
 
@@ -98,7 +98,7 @@
 | Hebbian learning (LTP/LTD) | :white_check_mark: 완료 | coactivations table |
 | Spreading activation | :white_check_mark: 완료 | beam search + graph traversal |
 | FTS5 BM25 + RRF fusion | :white_check_mark: 완료 | keyword + graph 결합 검색 |
-| 30 MCP tools | :white_check_mark: 완료 | 10개 카테고리 |
+| 33 MCP tools | :white_check_mark: 완료 | 12개 카테고리 (advisor, user 추가) |
 | GitHub connector | :white_check_mark: 완료 | PR, Issue, ADR, CODEOWNERS |
 | Slack connector | :white_check_mark: 완료 | signal-filtered messages + threads |
 | Notion connector | :white_check_mark: 완료 | pages, databases, block content |
@@ -120,7 +120,7 @@
 | Meeting Agent Slack/Notion output | P2 | 2-3일 | CLI/MCP 구현 완료. Slack 공유 + Notion 페이지 생성 미구현 |
 | Batch synapse creation 성능 | P3 | 1일 | 대량 import 시 transaction batching 최적화 |
 
-### 2.4 제공하는 인터페이스 (MCP Tools 30개)
+### 2.4 제공하는 인터페이스 (MCP Tools 33개)
 
 #### Project (4 tools)
 

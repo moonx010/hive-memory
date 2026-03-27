@@ -19,10 +19,10 @@ Stores entities (decisions, learnings, documents, conversations, people) in a SQ
   - `entities` table: unified entity model (memory, reference, decision, person, document, conversation, message, meeting, task, event, snippet)
   - `synapses` table: weighted directed graph (15 axon types)
   - `coactivations` table: Hebbian learning pairs
-  - `entity_aliases` table: cross-source identity mapping (schema v2)
+  - `entity_aliases` table: cross-source identity mapping (schema v3: content_hash + sync_phase + sync_history)
   - `projects`, `sessions`, `connectors` tables
 - **Search**: FTS5 BM25 + spreading activation + RRF fusion
-- **30 MCP tools**: 10 v2-compatible + 20 new (browse, trail, connectors, team, context, meeting, steward)
+- **33 MCP tools**: 10 v2-compatible + 23 new (browse, trail, connectors, team, context, meeting, steward, advisor, user)
 
 ### v2 (Legacy, auto-migrated) — JSON Cell Tree
 - Hive cell tree (`hive.json` + `cells/*.json`) with keyword-based clustering
@@ -40,6 +40,8 @@ Stores entities (decisions, learnings, documents, conversations, people) in a SQ
 **Context** (2): `context_enrich`, `entity_resolve`
 **Meeting** (2): `meeting_process`, `meeting_briefing`
 **Steward** (2): `memory_audit`, `memory_briefing`
+**Advisor** (2): `workflow_analyze`, `pattern_analyze`
+**User** (1): `user_manage`
 
 ## Module Structure
 
@@ -88,8 +90,15 @@ Stores entities (decisions, learnings, documents, conversations, people) in a SQ
 ### Steward
 - `src/steward/index.ts` — MemorySteward: data quality audit + daily/weekly briefings
 
+### Advisor
+- `src/advisor/index.ts` — WorkflowAdvisor: workflow pattern analysis + improvement suggestions
+- `src/advisor/patterns.ts` — PatternAnalyzer: activity heatmap + collaboration graph
+
+### Auth
+- `src/auth.ts` — User management (create/list/revoke API keys, CORTEX_AUTH_TOKEN)
+
 ### Tools
-- `src/tools/index.ts` — Tool registration (all 30 tools)
+- `src/tools/index.ts` — Tool registration (all 33 tools)
 - `src/tools/browse-tools.ts` — ls, tree, grep, inspect, timeline
 - `src/tools/trail-tools.ts` — trail, who, decay
 - `src/tools/connector-tools.ts` — sync, status
@@ -97,29 +106,42 @@ Stores entities (decisions, learnings, documents, conversations, people) in a SQ
 - `src/tools/context-tools.ts` — context_enrich, entity_resolve
 - `src/tools/meeting-tools.ts` — meeting_process, meeting_briefing
 - `src/tools/steward-tools.ts` — memory_audit, memory_briefing
+- `src/tools/advisor-tools.ts` — workflow_analyze, pattern_analyze
+- `src/tools/user-tools.ts` — user_manage
 - `src/tools/memory-tools.ts`, `project-tools.ts`, `session-tools.ts` (v2)
 
 ### Hooks
 - `src/hooks/session-end.ts` — SessionEnd auto-capture
 - `src/hooks/transcript-parser.ts` — JSONL transcript parsing
 
-## CLI Commands
+## CLI Commands (17 total)
 ```bash
-hive-memory                    # MCP server mode (default)
-hive-memory store ...          # Store memory
-hive-memory recall ...         # Search memories
-hive-memory status ...         # Project status
-hive-memory stats              # Database statistics
-hive-memory sync <connector>   # Run connector sync
-hive-memory team init <path>   # Initialize team cortex
-hive-memory team push/pull     # Team sync
-hive-memory hook session-end   # Auto session capture
-hive-memory cleanup            # Remove expired entries
-hive-memory enrich             # Run enrichment batch (--since, --type, --limit)
-hive-memory meeting <file>     # Process meeting transcript (--title, --output)
-hive-memory audit              # Run memory data quality audit
-hive-memory briefing           # Generate daily/weekly briefing (--type daily|weekly)
+hive-memory                      # MCP server mode (default, auto-sync scheduler enabled)
+hive-memory store ...            # Store memory
+hive-memory recall ...           # Search memories
+hive-memory status ...           # Project status
+hive-memory inject ...           # Recall + append to file
+hive-memory sync <connector>     # Run connector sync
+hive-memory cleanup              # Remove expired entries
+hive-memory stats                # Database statistics
+hive-memory team init <path>     # Initialize team cortex
+hive-memory team push/pull       # Team sync
+hive-memory enrich               # Run enrichment batch (--since, --type, --limit)
+hive-memory meeting <file>       # Process meeting transcript (--title, --output)
+hive-memory transcribe <file>    # Full pipeline: audio/video → STT → meeting notes
+hive-memory audit                # Run memory data quality audit
+hive-memory briefing             # Generate daily/weekly briefing (--type daily|weekly)
+hive-memory analyze              # Analyze workflow patterns and generate insights
+hive-memory patterns             # Analyze aggregated working patterns (--since, --project)
+hive-memory connect              # Generate MCP config for Claude Code or Cursor
+hive-memory user <action>        # Manage users (create, list, revoke) — requires CORTEX_AUTH_TOKEN
+hive-memory hook session-end     # Auto session capture (Claude Code hook)
 ```
+
+## Deployment
+- **Railway**: `railway.json` configures Nixpacks build + `node dist/index.js` start command
+- **HTTP mode**: `CORTEX_HTTP=true` enables HTTP transport (auth via `CORTEX_AUTH_TOKEN`)
+- **Auto-sync scheduler**: runs connector sync + enrichment periodically when in server mode (interval via `CORTEX_SYNC_INTERVAL_MS`)
 
 ## Conventions
 - `src/` — TypeScript source
