@@ -5,6 +5,8 @@ import { homedir } from "node:os";
 import { mkdirSync } from "node:fs";
 import { createSchema } from "./schema.js";
 import type { Entity, ConnectorConfig } from "../types.js";
+import { VectorStore } from "../search/vector-store.js";
+import { rrfFusion, buildEmbedText } from "../search/hybrid.js";
 
 // Re-export Entity so consumers can import it from this module
 export type { Entity } from "../types.js";
@@ -346,8 +348,11 @@ export function computeContentHash(content: string): string {
 // async adapter (AsyncHiveDb in adapter.ts) and the legacy shim in store.ts.
 // All public methods are synchronous (better-sqlite3 is blocking).
 
+// HiveDatabase satisfies the IHiveDatabase interface defined in src/pipeline/db-interface.ts.
+// The implements clause is omitted to avoid a circular module dependency.
 export class HiveDatabase {
   private db: BetterSqlite3.Database;
+  private _vectorStore: VectorStore | null = null;
 
   constructor(dbPath?: string) {
     const defaultPath = join(homedir(), ".cortex", "cortex.db");
@@ -364,6 +369,22 @@ export class HiveDatabase {
     this.db.pragma("foreign_keys = ON");
 
     createSchema(this.db);
+
+    // Initialize vector store (graceful degradation if sqlite-vec unavailable)
+    this._vectorStore = new VectorStore(this.db);
+  }
+
+  /** Expose raw SQLite database for advanced queries (e.g. transactions in pipeline code). */
+  get rawDb(): BetterSqlite3.Database {
+    return this.db;
+  }
+
+  /** Expose VectorStore for external embedding pipeline. */
+  get vectorStore(): VectorStore {
+    if (!this._vectorStore) {
+      this._vectorStore = new VectorStore(this.db);
+    }
+    return this._vectorStore;
   }
 
   // ── Entity methods ──────────────────────────────────────────────────────────
@@ -1236,6 +1257,83 @@ export class HiveDatabase {
 
   updateUserStatus(userId: string, status: string): void {
     this.db.prepare("UPDATE users SET status = ? WHERE id = ?").run(status, userId);
+  }
+
+  // ── Hybrid Search ────────────────────────────────────────────────────────────
+
+  /**
+   * Hybrid search: BM25 (FTS5) + vector similarity fused via RRF.
+   *
+   * When a query embedding is provided and the vector store is available, results
+   * from both retrieval paths are merged with Reciprocal Rank Fusion.
+   * Falls back to FTS5-only if no embedding or vector store unavailable.
+   */
+  hybridSearch(
+    query: string,
+    options: SearchEntitiesOptions & { embedding?: Float32Array } = {},
+  ): Entity[] {
+    const { embedding, ...searchOptions } = options;
+    const limit = searchOptions.limit ?? 20;
+
+    // Step 1: FTS5 BM25 search
+    const bm25Results = this.searchEntities(query, { ...searchOptions, limit: limit * 3 });
+
+    // Step 2: Vector search (if embedding provided and store available)
+    const vs = this._vectorStore;
+    if (embedding && vs?.isAvailable) {
+      const vectorResults = vs.searchSimilar(embedding, limit * 3);
+
+      // Build entity map for RRF lookup (populate with bm25 results + fetch vector hits)
+      const entityMap = new Map<string, Entity>();
+      for (const e of bm25Results) entityMap.set(e.id, e);
+
+      for (const vr of vectorResults) {
+        if (!entityMap.has(vr.entityId)) {
+          const entity = this.getEntity(vr.entityId);
+          if (entity && entity.status === "active") {
+            // Apply project filter if set
+            if (searchOptions.project && entity.project !== searchOptions.project) continue;
+            entityMap.set(vr.entityId, entity);
+          }
+        }
+      }
+
+      // Step 3: RRF fusion
+      return rrfFusion(bm25Results, vectorResults, entityMap, 60, limit).map(
+        (r) => r.entity,
+      );
+    }
+
+    return bm25Results.slice(0, limit);
+  }
+
+  /**
+   * Index an entity's embedding into the vector store.
+   * Builds contextual embed text (prefix + title + content).
+   * No-op if vector store unavailable.
+   */
+  indexEntityEmbedding(entity: Entity, embedding: Float32Array): void {
+    const vs = this._vectorStore;
+    if (!vs?.isAvailable) return;
+    vs.upsertVector(entity.id, embedding);
+  }
+
+  /**
+   * Remove entity embedding from vector store.
+   * No-op if vector store unavailable.
+   */
+  removeEntityEmbedding(entityId: string): void {
+    const vs = this._vectorStore;
+    if (!vs?.isAvailable) return;
+    vs.deleteVector(entityId);
+  }
+
+  /**
+   * Build embed text for an entity (contextual prefix + title + content).
+   * Exported for use by ingestion pipeline.
+   */
+  static buildEmbedText(entity: Entity): string {
+    return buildEmbedText(entity);
   }
 
   // ── Lifecycle ───────────────────────────────────────────────────────────────

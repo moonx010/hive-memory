@@ -1,0 +1,118 @@
+/// Feature Development Workflow
+///
+/// Standard flow: Plan → Architect Review → Implement → Test → Code Review
+///
+/// Usage:
+///   loom run workflows/feature-dev.loom \
+///     -p project_dir=/Users/moonseokhoon/Desktop/project/hive-memory \
+///     -p feature_name="hybrid-search-rag" \
+///     -p feature_spec="Add sqlite-vec vector search + FTS5 BM25 + RRF fusion" \
+///     --mode auto
+
+workflow FeatureDev {
+  input {
+    project_dir: string
+    feature_name: string
+    feature_spec: string
+  }
+
+  step plan {
+    engine: claude(sonnet-4-6)
+    prompt: """
+      You are a senior engineer planning a feature for hive-memory at ${project_dir}.
+
+      Feature: ${feature_name}
+      Spec: ${feature_spec}
+
+      Read the codebase:
+      1. cat ${project_dir}/CLAUDE.md
+      2. cat ${project_dir}/src/db/schema.ts
+      3. cat ${project_dir}/src/db/database.ts | head -100
+      4. ls ${project_dir}/src/
+
+      Create a detailed implementation plan:
+      - Files to create/modify
+      - Dependencies needed (npm packages)
+      - Schema changes
+      - Test strategy
+      - Migration path (backward compat)
+      - Estimated complexity per file
+    """
+    output {
+      plan: string
+      files_to_change: string
+      dependencies: string
+    }
+  }
+
+  step architect_review {
+    engine: claude(opus-4-6)
+    prompt: """
+      Review this implementation plan as an architect:
+
+      Feature: ${feature_name}
+      Plan: ${plan.plan}
+      Files: ${plan.files_to_change}
+      Dependencies: ${plan.dependencies}
+
+      Read the actual source files at ${project_dir} to verify.
+      Check: architecture consistency, performance, security, backward compat.
+      Output: APPROVE or REVISE with specific feedback.
+    """
+    output {
+      verdict: string
+      feedback: string
+    }
+  }
+
+  step implement {
+    engine: claude(sonnet-4-6)
+    on_error: retry(1, 0s)
+    prompt: """
+      Implement the feature at ${project_dir}:
+
+      Plan: ${plan.plan}
+      Architect feedback: ${architect_review.feedback}
+
+      Steps:
+      1. Install any needed npm packages
+      2. Create/modify files per plan
+      3. npm run build — fix errors
+      4. npm test — fix regressions
+      5. npm run lint — fix warnings
+      6. Write new tests for new functionality
+      7. Report: files changed, test count, build status
+    """
+    output {
+      files_changed: string
+      build_pass: bool
+      test_pass: bool
+      new_tests: number
+      total_tests: number
+    }
+  }
+
+  step code_review {
+    engine: claude(opus-4-6)
+    prompt: """
+      Code review the implementation at ${project_dir}:
+
+      git diff --stat to see changes.
+      Files changed: ${implement.files_changed}
+      Tests: ${implement.new_tests} new, ${implement.total_tests} total
+
+      Check:
+      1. No security vulnerabilities
+      2. No regressions (all tests pass)
+      3. Performance acceptable
+      4. Code follows existing patterns
+      5. Tests cover edge cases
+
+      Verdict: APPROVE or REQUEST CHANGES.
+    """
+    output {
+      verdict: string
+      issues: string
+    }
+  }
+}
