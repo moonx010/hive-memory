@@ -3,6 +3,16 @@ import type { Database } from "better-sqlite3";
 export const SCHEMA_VERSION = 5;
 
 export function createSchema(db: Database): void {
+  // ── Schema version tracking ───────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT);
+    INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('version', '${SCHEMA_VERSION}');
+  `);
+
+  // Check if already at target version — skip ALTER TABLE migrations if so
+  const versionRow = db.prepare("SELECT value FROM schema_meta WHERE key = 'version'").get() as { value: string } | undefined;
+  const currentVersion = versionRow ? parseInt(versionRow.value, 10) : 0;
+
   db.exec(`
     -- ── entities ──────────────────────────────────────────────────────────────
     CREATE TABLE IF NOT EXISTS entities (
@@ -176,23 +186,31 @@ export function createSchema(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
   `);
 
-  // v3 migration: add content_hash column to existing databases
-  try {
-    db.exec(`ALTER TABLE entities ADD COLUMN content_hash TEXT`);
-  } catch {
-    // Column already exists (fresh DB or already migrated) — safe to ignore
-  }
+  // Run column migrations only when upgrading from an older schema version
+  if (currentVersion < 3) {
+    // v3 migration: add content_hash column to existing databases
+    try {
+      db.exec(`ALTER TABLE entities ADD COLUMN content_hash TEXT`);
+    } catch {
+      // Column already exists — safe to ignore
+    }
 
-  // v3 migration: add sync_phase and sync_history columns to connectors table
-  try {
-    db.exec(`ALTER TABLE connectors ADD COLUMN sync_phase TEXT NOT NULL DEFAULT 'initial'`);
-  } catch {
-    // Column already exists (fresh DB or already migrated) — safe to ignore
-  }
-  try {
-    db.exec(`ALTER TABLE connectors ADD COLUMN sync_history TEXT NOT NULL DEFAULT '[]'`);
-  } catch {
-    // Column already exists (fresh DB or already migrated) — safe to ignore
+    // v3 migration: add sync_phase and sync_history columns to connectors table
+    try {
+      db.exec(`ALTER TABLE connectors ADD COLUMN sync_phase TEXT NOT NULL DEFAULT 'initial'`);
+    } catch {
+      // Column already exists — safe to ignore
+    }
+    try {
+      db.exec(`ALTER TABLE connectors ADD COLUMN sync_history TEXT NOT NULL DEFAULT '[]'`);
+    } catch {
+      // Column already exists — safe to ignore
+    }
+  } else {
+    // Fresh DB or already at v3+: ensure columns exist via safe try/catch
+    try { db.exec(`ALTER TABLE entities ADD COLUMN content_hash TEXT`); } catch { /* exists */ }
+    try { db.exec(`ALTER TABLE connectors ADD COLUMN sync_phase TEXT NOT NULL DEFAULT 'initial'`); } catch { /* exists */ }
+    try { db.exec(`ALTER TABLE connectors ADD COLUMN sync_history TEXT NOT NULL DEFAULT '[]'`); } catch { /* exists */ }
   }
 
   // v5 migration: ACL columns
@@ -228,4 +246,7 @@ export function createSchema(db: Database): void {
 
   // v5: revoked_at on users
   try { db.exec(`ALTER TABLE users ADD COLUMN revoked_at TEXT`); } catch { /* exists */ }
+
+  // Update schema_meta version to current
+  db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('version', ?)").run(String(SCHEMA_VERSION));
 }

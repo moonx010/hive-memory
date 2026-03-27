@@ -1,23 +1,26 @@
 import { z } from "zod";
 import type { HiveDatabase } from "../db/database.js";
-import { createUser, listUsers, revokeUser } from "../auth.js";
+import { createUser, listUsers, revokeUser, rotateApiKey } from "../auth.js";
 import type { SafeToolFn, UserContext } from "./index.js";
+import { getCurrentRequestContext } from "../request-context.js";
 
 export function registerUserTools(safeTool: SafeToolFn, db: HiveDatabase, userContext?: UserContext) {
   safeTool(
     "user_manage",
-    "Manage hive-memory users. Admin-only tool — requires CORTEX_AUTH_TOKEN. Actions: add (create user + return API key), list (all users), revoke (deactivate user).",
+    "Manage hive-memory users. Admin-only tool — requires CORTEX_AUTH_TOKEN. Actions: add (create user + return API key), list (all users), revoke (deactivate user), rotate (rotate API key).",
     {
-      action: z.enum(["add", "list", "revoke"]).describe("Action to perform"),
+      action: z.enum(["add", "list", "revoke", "rotate"]).describe("Action to perform"),
       name: z.string().optional().describe("User name (required for 'add')"),
       email: z.string().optional().describe("User email (optional for 'add')"),
-      user_id: z.string().optional().describe("User ID to revoke (required for 'revoke')"),
+      user_id: z.string().optional().describe("User ID to revoke or rotate (required for 'revoke' and 'rotate')"),
     },
     async (args) => {
-      // Admin authorization check
-      if (userContext?.userId) {
+      // Admin authorization check — use ALS context or fallback to passed userContext
+      const requestCtx = getCurrentRequestContext();
+      const effectiveCtx = requestCtx.userId ? requestCtx : (userContext ?? {});
+      if (effectiveCtx.userId) {
         const allUsers = listUsers(db);
-        const caller = allUsers.find(u => u.id === userContext.userId);
+        const caller = allUsers.find(u => u.id === effectiveCtx.userId);
         if (caller && caller.role !== "admin") {
           return { content: [{ type: "text" as const, text: "Error: user_manage requires admin role" }], isError: true };
         }
@@ -69,6 +72,28 @@ export function registerUserTools(safeTool: SafeToolFn, db: HiveDatabase, userCo
           }
           revokeUser(db, userId);
           return { content: [{ type: "text" as const, text: `User ${user.name} (${userId}) revoked.` }] };
+        }
+
+        case "rotate": {
+          const userId = args.user_id as string | undefined;
+          if (!userId) {
+            return { content: [{ type: "text" as const, text: "Error: user_id is required for action 'rotate'" }], isError: true };
+          }
+          const users = listUsers(db);
+          const user = users.find((u) => u.id === userId);
+          if (!user) {
+            return { content: [{ type: "text" as const, text: `Error: user not found: ${userId}` }], isError: true };
+          }
+          const { newKey, graceUntil } = rotateApiKey(db, userId);
+          const lines = [
+            `API key rotated for user ${user.name} (${userId}).`,
+            ``,
+            `New API key (save this — it won't be shown again):`,
+            `  ${newKey}`,
+            ``,
+            `Grace period expires: ${graceUntil}`,
+          ];
+          return { content: [{ type: "text" as const, text: lines.join("\n") }] };
         }
 
         default:

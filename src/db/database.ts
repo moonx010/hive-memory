@@ -7,6 +7,8 @@ import { createSchema } from "./schema.js";
 import type { Entity, ConnectorConfig } from "../types.js";
 import { VectorStore } from "../search/vector-store.js";
 import { rrfFusion, buildEmbedText } from "../search/hybrid.js";
+import type { ACLContext } from "../acl/types.js";
+import { defaultACLPolicy } from "../acl/policy.js";
 
 // Re-export Entity so consumers can import it from this module
 export type { Entity } from "../types.js";
@@ -186,6 +188,8 @@ export interface ListEntitiesOptions {
   unenrichedOnly?: boolean;
   /** When true, only return entities with non-empty keywords array */
   hasKeywords?: boolean;
+  /** ACL context — when provided, results are filtered per policy. */
+  acl?: ACLContext;
 }
 
 export interface SearchEntitiesOptions {
@@ -194,6 +198,8 @@ export interface SearchEntitiesOptions {
   domain?: string;
   namespace?: string;
   limit?: number;
+  /** ACL context — when provided, results are filtered per policy. */
+  acl?: ACLContext;
 }
 
 export interface CountEntitiesOptions {
@@ -458,11 +464,21 @@ export class HiveDatabase {
     this.db.prepare("DELETE FROM entities WHERE id = ?").run(id);
   }
 
-  getEntity(id: string): Entity | null {
+  getEntity(id: string, acl?: ACLContext): Entity | null {
     const row = this.db
       .prepare("SELECT * FROM entities WHERE id = ?")
       .get(id) as EntityRow | undefined;
-    return row ? rowToEntity(row) : null;
+    if (!row) return null;
+    const entity = rowToEntity(row);
+    if (acl && !defaultACLPolicy.canRead({
+      visibility: entity.visibility,
+      ownerId: (entity.attributes?.ownerId as string | undefined),
+      requiredLabels: (entity.attributes?.requiredLabels as string[] | undefined),
+      aclMembers: (entity.attributes?.aclMembers as string[] | undefined),
+    }, acl)) {
+      return null;
+    }
+    return entity;
   }
 
   listEntities(options: ListEntitiesOptions = {}): Entity[] {
@@ -480,52 +496,58 @@ export class HiveDatabase {
       offset = 0,
       unenrichedOnly = false,
       hasKeywords = false,
+      acl,
     } = options;
 
     const conditions: string[] = [];
     const params: Record<string, unknown> = {};
 
     if (project !== undefined) {
-      conditions.push("project = @project");
+      conditions.push("e.project = @project");
       params.project = project;
     }
     if (entityType !== undefined) {
       if (Array.isArray(entityType)) {
         if (entityType.length > 0) {
           const placeholders = entityType.map((_, i) => `@et${i}`);
-          conditions.push(`entity_type IN (${placeholders.join(", ")})`);
+          conditions.push(`e.entity_type IN (${placeholders.join(", ")})`);
           entityType.forEach((t, i) => { params[`et${i}`] = t; });
         }
       } else {
-        conditions.push("entity_type = @entityType");
+        conditions.push("e.entity_type = @entityType");
         params.entityType = entityType;
       }
     }
     if (domain !== undefined) {
-      conditions.push("domain = @domain");
+      conditions.push("e.domain = @domain");
       params.domain = domain;
     }
     if (namespace !== undefined) {
-      conditions.push("namespace = @namespace");
+      conditions.push("e.namespace = @namespace");
       params.namespace = namespace;
     }
     if (status !== undefined) {
-      conditions.push("status = @status");
+      conditions.push("e.status = @status");
       params.status = status;
     }
     if (since !== undefined) {
-      conditions.push("updated_at >= @since");
+      conditions.push("e.updated_at >= @since");
       params.since = since;
     }
     if (until !== undefined) {
-      conditions.push("updated_at <= @until");
+      conditions.push("e.updated_at <= @until");
       params.until = until;
     }
     if (unenrichedOnly) {
-      conditions.push("JSON_EXTRACT(attributes, '$._enrichedAt') IS NULL");
+      conditions.push("JSON_EXTRACT(e.attributes, '$._enrichedAt') IS NULL");
     }
     if (hasKeywords) {
-      conditions.push("keywords != '[]'");
+      conditions.push("e.keywords != '[]'");
+    }
+    if (acl) {
+      const { clause, params: aclParams } = defaultACLPolicy.sqlWhereClause(acl);
+      conditions.push(clause);
+      Object.assign(params, aclParams);
     }
 
     const where =
@@ -534,12 +556,12 @@ export class HiveDatabase {
     // Normalize sort to a valid SQL column
     let sortCol: string;
     if (sort === "created_at") {
-      sortCol = "created_at";
+      sortCol = "e.created_at";
     } else if (sort === "name") {
-      sortCol = "COALESCE(title, id)";
+      sortCol = "COALESCE(e.title, e.id)";
     } else {
       // "updated_at" | "recent" | "relevance" — default to updated_at
-      sortCol = "updated_at";
+      sortCol = "e.updated_at";
     }
     const sortDir = order === "asc" ? "ASC" : "DESC";
 
@@ -548,7 +570,7 @@ export class HiveDatabase {
 
     const rows = this.db
       .prepare(
-        `SELECT * FROM entities ${where} ORDER BY ${sortCol} ${sortDir} LIMIT @limit OFFSET @offset`,
+        `SELECT e.* FROM entities e ${where} ORDER BY ${sortCol} ${sortDir} LIMIT @limit OFFSET @offset`,
       )
       .all(params) as EntityRow[];
 
@@ -556,7 +578,7 @@ export class HiveDatabase {
   }
 
   searchEntities(query: string, options: SearchEntitiesOptions = {}): Entity[] {
-    const { project, entityType, domain, namespace, limit = 20 } = options;
+    const { project, entityType, domain, namespace, limit = 20, acl } = options;
 
     const extraConditions: string[] = [];
     const params: Record<string, unknown> = { query, limit };
@@ -576,6 +598,12 @@ export class HiveDatabase {
     if (namespace !== undefined) {
       extraConditions.push("e.namespace = @namespace");
       params.namespace = namespace;
+    }
+
+    if (acl) {
+      const { clause, params: aclParams } = defaultACLPolicy.sqlWhereClause(acl);
+      extraConditions.push(clause);
+      Object.assign(params, aclParams);
     }
 
     const extraWhere =
@@ -1258,6 +1286,25 @@ export class HiveDatabase {
 
   updateUserStatus(userId: string, status: string): void {
     this.db.prepare("UPDATE users SET status = ? WHERE id = ?").run(status, userId);
+  }
+
+  /** Get label IDs associated with a user (from user_labels table). */
+  getUserLabels(userId: string): string[] {
+    const rows = this.db
+      .prepare("SELECT label_id FROM user_labels WHERE user_id = ?")
+      .all(userId) as { label_id: string }[];
+    return rows.map((r) => r.label_id);
+  }
+
+  rotateUserApiKey(userId: string, newHash: string, graceUntil: string): void {
+    this.db.prepare("UPDATE users SET api_key_hash = ?, revoked_at = ? WHERE id = ?")
+      .run(newHash, graceUntil, userId);
+  }
+
+  // ── Backup ────────────────────────────────────────────────────────────────────
+
+  backup(outputPath: string): void {
+    this.db.backup(outputPath);
   }
 
   // ── Hybrid Search ────────────────────────────────────────────────────────────

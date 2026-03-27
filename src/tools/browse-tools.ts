@@ -2,6 +2,7 @@ import { z } from "zod";
 import { HiveDatabase } from "../db/database.js";
 import type { Entity } from "../types.js";
 import type { SafeToolFn } from "./index.js";
+import { resolveACL } from "../acl/resolver.js";
 
 // ── Helpers ──
 
@@ -69,6 +70,7 @@ export function registerBrowseTools(safeTool: SafeToolFn, db: HiveDatabase) {
       const dbSort = sortArg === "name" ? "created_at" : "updated_at";
       const limit = (args.limit as number | undefined) ?? 20;
       const offset = (args.offset as number | undefined) ?? 0;
+      const acl = resolveACL(db);
 
       const { namespace, project, entityType } = parsePath(path);
 
@@ -82,7 +84,7 @@ export function registerBrowseTools(safeTool: SafeToolFn, db: HiveDatabase) {
           `  local/   (${localCount} entries)`,
         ];
         // List additional namespaces if any (beyond "local")
-        const allEntities = db.listEntities({ limit: 5000 });
+        const allEntities = db.listEntities({ limit: 5000, acl });
         const namespaces = new Map<string, number>();
         for (const e of allEntities) {
           namespaces.set(e.namespace, (namespaces.get(e.namespace) ?? 0) + 1);
@@ -113,7 +115,7 @@ export function registerBrowseTools(safeTool: SafeToolFn, db: HiveDatabase) {
 
       // Level 2: "/local/{project}" — entity type breakdown
       if (!entityType) {
-        const allForProject = db.listEntities({ project, namespace, limit: 5000 });
+        const allForProject = db.listEntities({ project, namespace, limit: 5000, acl });
         if (allForProject.length === 0) {
           return {
             content: [
@@ -147,6 +149,7 @@ export function registerBrowseTools(safeTool: SafeToolFn, db: HiveDatabase) {
         order: "desc",
         limit,
         offset,
+        acl,
       });
 
       if (entries.length === 0) {
@@ -197,6 +200,7 @@ export function registerBrowseTools(safeTool: SafeToolFn, db: HiveDatabase) {
     async (args) => {
       const rootPath = (args.path as string | undefined) ?? "/";
       const maxDepth = (args.depth as number | undefined) ?? 2;
+      const acl = resolveACL(db);
 
       const { namespace } = parsePath(rootPath);
 
@@ -217,7 +221,7 @@ export function registerBrowseTools(safeTool: SafeToolFn, db: HiveDatabase) {
         const total = db.countEntities({ project: p.id, namespace: ns });
         if (total === 0 && namespace) continue;
 
-        const allEntries = db.listEntities({ project: p.id, namespace: ns, limit: 5000 });
+        const allEntries = db.listEntities({ project: p.id, namespace: ns, limit: 5000, acl });
         const byType = new Map<string, number>();
         for (const e of allEntries) {
           byType.set(e.entityType, (byType.get(e.entityType) ?? 0) + 1);
@@ -283,6 +287,7 @@ export function registerBrowseTools(safeTool: SafeToolFn, db: HiveDatabase) {
       const pattern = args.pattern as string;
       const scope = args.scope as string | undefined;
       const limit = (args.limit as number | undefined) ?? 10;
+      const acl = resolveACL(db);
 
       // Determine if scope is a project ID or entity type
       let projectFilter: string | undefined;
@@ -303,6 +308,7 @@ export function registerBrowseTools(safeTool: SafeToolFn, db: HiveDatabase) {
         project: projectFilter,
         entityType: typeFilter,
         limit,
+        acl,
       });
 
       if (results.length === 0) {
@@ -353,8 +359,9 @@ export function registerBrowseTools(safeTool: SafeToolFn, db: HiveDatabase) {
     async (args) => {
       const id = args.id as string;
       const depth = (args.depth as number | undefined) ?? 1;
+      const acl = resolveACL(db);
 
-      const entity = db.getEntity(id);
+      const entity = db.getEntity(id, acl);
       if (!entity) {
         return {
           content: [{ type: "text" as const, text: `Entity not found: ${id}` }],
@@ -506,6 +513,7 @@ export function registerBrowseTools(safeTool: SafeToolFn, db: HiveDatabase) {
       const scope = args.scope as string | undefined;
       const types = args.types as string[] | undefined;
       const limit = (args.limit as number | undefined) ?? 20;
+      const acl = resolveACL(db);
 
       let entities: Entity[];
 
@@ -517,6 +525,7 @@ export function registerBrowseTools(safeTool: SafeToolFn, db: HiveDatabase) {
           sort: "updated_at",
           order: "desc",
           limit,
+          acl,
         });
       } else {
         // Fetch and filter client-side for multi-type
@@ -525,6 +534,7 @@ export function registerBrowseTools(safeTool: SafeToolFn, db: HiveDatabase) {
           sort: "updated_at",
           order: "desc",
           limit: types && types.length > 0 ? limit * types.length : limit,
+          acl,
         });
         entities = types && types.length > 0
           ? fetched.filter((e) => types.includes(e.entityType)).slice(0, limit)

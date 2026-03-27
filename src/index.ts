@@ -13,6 +13,12 @@ import { registerTools } from "./tools.js";
 import { handleCli } from "./cli.js";
 import { resolveAuth } from "./auth.js";
 import { verifySlackSignature, handleSlackEvent } from "./bot/slack-bot.js";
+import { recordRequest, recordSync, getMetrics } from "./observability/metrics.js";
+import { checkRateLimit } from "./observability/rate-limit.js";
+import { requestContext } from "./request-context.js";
+
+// Re-export getCurrentRequestContext for consumers
+export { getCurrentRequestContext } from "./request-context.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
@@ -97,7 +103,7 @@ async function handleHook(args: string[]): Promise<void> {
 
 // --- CLI commands ---
 
-const CLI_COMMANDS = new Set(["store", "recall", "status", "inject", "sync", "cleanup", "stats", "team", "enrich", "meeting", "transcribe", "audit", "briefing", "analyze", "patterns", "connect", "user"]);
+const CLI_COMMANDS = new Set(["store", "recall", "status", "inject", "sync", "cleanup", "stats", "team", "enrich", "meeting", "transcribe", "audit", "briefing", "analyze", "patterns", "connect", "user", "backup", "import-slack", "lifecycle"]);
 
 // --- Main ---
 
@@ -118,15 +124,7 @@ async function main() {
       version: pkg.version as string,
     });
 
-    // Per-request user context via closure. The getter always returns the
-    // current request's context, avoiding race conditions between concurrent requests.
-    let _currentUserContext: { userId?: string; userName?: string } = {};
-    const userContextProxy = new Proxy({} as { userId?: string; userName?: string }, {
-      get(_target, prop) {
-        return (_currentUserContext as Record<string | symbol, unknown>)[prop];
-      },
-    });
-    registerTools(server, store, userContextProxy);
+    registerTools(server, store);
 
     const slackBotEnabled = process.env["SLACK_BOT_ENABLED"] === "true";
     const slackSigningSecret = process.env["SLACK_SIGNING_SECRET"] ?? "";
@@ -143,6 +141,13 @@ async function main() {
           res.writeHead(503, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ status: "error" }));
         }
+        return;
+      }
+
+      // ── Metrics endpoint ──────────────────────────────────────────────────────
+      if (req.url === "/metrics" && req.method === "GET") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(getMetrics()));
         return;
       }
 
@@ -203,13 +208,32 @@ async function main() {
         res.end("Unauthorized");
         return;
       }
-      // Set per-request context (Proxy reads from this variable)
-      _currentUserContext = Object.freeze({ userId, userName });
 
-      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-      res.on("close", () => { transport.close(); });
-      await server.connect(transport);
-      await transport.handleRequest(req, res);
+      // ── Rate limiting ────────────────────────────────────────────────────────
+      const rateLimitKey = userId ?? req.socket.remoteAddress ?? "anonymous";
+      if (!checkRateLimit(rateLimitKey)) {
+        res.writeHead(429, { "Content-Type": "text/plain" });
+        res.end("Too Many Requests");
+        return;
+      }
+
+      const requestStart = Date.now();
+      let requestError = false;
+      res.on("close", () => {
+        recordRequest(Date.now() - requestStart, requestError);
+      });
+
+      await requestContext.run({ userId, userName }, async () => {
+        try {
+          const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+          res.on("close", () => { transport.close(); });
+          await server.connect(transport);
+          await transport.handleRequest(req, res);
+        } catch (err) {
+          requestError = true;
+          throw err;
+        }
+      });
     });
 
     httpServer.listen(port, () => {
@@ -224,8 +248,10 @@ async function main() {
           if (!connector.isConfigured()) continue;
           try {
             const result = await store.syncConnector(connector.id);
+            recordSync(connector.id, true);
             console.error(`[auto-sync] ${connector.id}: +${result.added} updated=${result.updated} errors=${result.errors}`);
           } catch (err) {
+            recordSync(connector.id, false);
             console.error(`[auto-sync] ${connector.id} failed: ${err}`);
           }
         }
@@ -436,7 +462,7 @@ async function handleTeamCli(store: CortexStore, args: string[]): Promise<void> 
 // ── user command ──
 
 async function handleUserCli(store: CortexStore, args: string[]): Promise<void> {
-  const { createUser, listUsers, revokeUser } = await import("./auth.js");
+  const { createUser, listUsers, revokeUser, rotateApiKey } = await import("./auth.js");
   const db = store.database;
   const subcommand = args[0];
 
@@ -496,9 +522,29 @@ async function handleUserCli(store: CortexStore, args: string[]): Promise<void> 
       break;
     }
 
+    case "rotate": {
+      const userId = args[1];
+      if (!userId) {
+        console.error("Usage: hive-memory user rotate <user-id>");
+        process.exit(1);
+      }
+      const users = listUsers(db);
+      const user = users.find((u) => u.id === userId);
+      if (!user) {
+        console.error(`User not found: ${userId}`);
+        process.exit(1);
+      }
+      const { newKey, graceUntil } = rotateApiKey(db, userId);
+      console.log(`API key rotated for user ${user.name} (${userId}).`);
+      console.log(`\nNew API key (save this — it won't be shown again):`);
+      console.log(`  ${newKey}`);
+      console.log(`\nGrace period expires: ${graceUntil}`);
+      break;
+    }
+
     default:
       console.error(`Unknown user subcommand: ${subcommand ?? "(none)"}`);
-      console.error("Available: user create <name> [--email <email>], user list, user revoke <id>");
+      console.error("Available: user create <name> [--email <email>], user list, user revoke <id>, user rotate <id>");
       process.exit(1);
   }
 }
