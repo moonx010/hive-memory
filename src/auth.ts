@@ -74,6 +74,21 @@ export function revokeUser(db: HiveDatabase, userId: string): void {
   db.updateUserStatus(userId, "revoked");
 }
 
+/**
+ * Rotate a user's API key — generates a new key and stores it.
+ * The old key is replaced immediately; graceUntil is stored for reference.
+ */
+export function rotateApiKey(
+  db: HiveDatabase,
+  userId: string,
+): { newKey: string; graceUntil: string } {
+  const newKey = "hm_" + crypto.randomBytes(32).toString("hex");
+  const newHash = hashApiKey(newKey);
+  const graceUntil = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  db.rotateUserApiKey(userId, newHash, graceUntil);
+  return { newKey, graceUntil };
+}
+
 // ── Auth resolution ───────────────────────────────────────────────────────────
 
 export interface AuthContext {

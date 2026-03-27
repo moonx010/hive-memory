@@ -2,6 +2,7 @@ import { z } from "zod";
 import { HiveDatabase } from "../db/database.js";
 import type { Entity } from "../types.js";
 import type { SafeToolFn } from "./index.js";
+import { resolveACL } from "../acl/resolver.js";
 
 // ── Helpers ──
 
@@ -41,9 +42,10 @@ export function registerTrailTools(safeTool: SafeToolFn, db: HiveDatabase) {
       const topic = args.topic as string;
       const domains = args.domains as string[] | undefined;
       const limit = (args.limit as number | undefined) ?? 20;
+      const acl = resolveACL(db);
 
       // FTS5 search across all domains
-      const results = db.searchEntities(topic, { limit: limit * 3 });
+      const results = db.searchEntities(topic, { limit: limit * 3, acl });
 
       if (results.length === 0) {
         return {
@@ -132,9 +134,10 @@ export function registerTrailTools(safeTool: SafeToolFn, db: HiveDatabase) {
     async (args) => {
       const topic = args.topic as string;
       const limit = (args.limit as number | undefined) ?? 5;
+      const acl = resolveACL(db);
 
       // Search broadly so we can rank authors
-      const results = db.searchEntities(topic, { limit: 100 });
+      const results = db.searchEntities(topic, { limit: 100, acl });
 
       if (results.length === 0) {
         return {

@@ -161,6 +161,9 @@ export async function handleCli(
     case "connect":
       await handleConnect(parsed);
       break;
+    case "backup":
+      await handleBackup(store, initStore, parsed);
+      break;
     default:
       printUsage();
       process.exit(1);
@@ -661,6 +664,17 @@ async function handleLifecycle(
   }
 }
 
+async function handleBackup(
+  store: CortexStore,
+  initStore: () => Promise<void>,
+  args: CliArgs,
+): Promise<void> {
+  await initStore();
+  const outputPath = args.output ?? "cortex-backup.db";
+  store.database.backup(outputPath);
+  console.log(`Database backed up to: ${outputPath}`);
+}
+
 function printUsage(): void {
   console.log(`Usage: hive-memory <command> [options]
 
@@ -681,6 +695,7 @@ Commands:
   connect   Generate MCP config for Claude Code or Cursor (--url, --key, --tool, --write)
   import-slack <dir>   Import Slack Enterprise Grid export
   lifecycle [run|stats]   Data lifecycle management (archive old entities)
+  backup    Backup SQLite database (--output <path>, default: cortex-backup.db)
 
   hook session-end    Auto-save session (Claude Code hook)
 

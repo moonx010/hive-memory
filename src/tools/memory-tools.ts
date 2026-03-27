@@ -2,9 +2,10 @@ import { z } from "zod";
 import type { CortexStore } from "../store.js";
 import type { MemoryCategory, AxonType } from "../types.js";
 import { validateId } from "../store/io.js";
-import type { SafeToolFn, UserContext } from "./index.js";
+import type { SafeToolFn } from "./index.js";
+import { getCurrentRequestContext } from "../request-context.js";
 
-export function registerMemoryTools(safeTool: SafeToolFn, store: CortexStore, userContext?: UserContext) {
+export function registerMemoryTools(safeTool: SafeToolFn, store: CortexStore) {
   safeTool(
     "memory_store",
     "Store a piece of knowledge, decision, or learning for a project. Auto-creates synapses (temporal, semantic, refinement) to related memories.",
@@ -19,7 +20,7 @@ export function registerMemoryTools(safeTool: SafeToolFn, store: CortexStore, us
       validateId(args.project as string);
       // If a user is authenticated, use their name as the author (entity attribution).
       const agentArg = args.agent as string | undefined;
-      const resolvedAgent = userContext?.userName ?? agentArg;
+      const resolvedAgent = getCurrentRequestContext().userName ?? agentArg;
       const entry = await store.storeMemory(
         args.project as string,
         args.category as MemoryCategory,

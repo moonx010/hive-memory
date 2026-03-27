@@ -1,9 +1,9 @@
 import { z } from "zod";
 import type { CortexStore } from "../store.js";
 import { validateId } from "../store/io.js";
-import type { SafeToolFn, UserContext } from "./index.js";
+import type { SafeToolFn } from "./index.js";
 
-export function registerSessionTools(safeTool: SafeToolFn, store: CortexStore, _userContext?: UserContext) {
+export function registerSessionTools(safeTool: SafeToolFn, store: CortexStore) {
   safeTool(
     "session_save",
     "Save session progress for a project — what was done and what's next. Call this at the end of a work session.",

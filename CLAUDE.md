@@ -19,10 +19,10 @@ Stores entities (decisions, learnings, documents, conversations, people) in a SQ
   - `entities` table: unified entity model (memory, reference, decision, person, document, conversation, message, meeting, task, event, snippet)
   - `synapses` table: weighted directed graph (15 axon types)
   - `coactivations` table: Hebbian learning pairs
-  - `entity_aliases` table: cross-source identity mapping (schema v2)
+  - `entity_aliases` table: cross-source identity mapping (schema v5)
   - `projects`, `sessions`, `connectors` tables
 - **Search**: FTS5 BM25 + spreading activation + RRF fusion
-- **30 MCP tools**: 10 v2-compatible + 20 new (browse, trail, connectors, team, context, meeting, steward)
+- **33 MCP tools**: 10 v2-compatible + 23 new (browse, trail, connectors, team, context, meeting, steward, advisor, user, audit)
 
 ### v2 (Legacy, auto-migrated) — JSON Cell Tree
 - Hive cell tree (`hive.json` + `cells/*.json`) with keyword-based clustering
@@ -40,6 +40,23 @@ Stores entities (decisions, learnings, documents, conversations, people) in a SQ
 **Context** (2): `context_enrich`, `entity_resolve`
 **Meeting** (2): `meeting_process`, `meeting_briefing`
 **Steward** (2): `memory_audit`, `memory_briefing`
+**Advisor** (2): `workflow_analyze`, `pattern_analyze`
+**User** (1): `user_manage`
+**Audit** (1): `memory_audit_log`
+
+### ACL
+Enable with `CORTEX_ACL=on`. When active, every query path (search, list, inspect) filters results per the `defaultACLPolicy`:
+- `private`: only owner
+- `dm`: only listed `aclMembers`
+- `team`/`org`: all authenticated users (label or member gate if configured)
+- `public`: always readable
+- `admin` role bypasses all restrictions except DM
+
+### Search
+- FTS5 full-text search on `title`, `content`, `tags`
+- Hybrid search: BM25 + vector similarity (RRF fusion) when `CORTEX_EMBEDDING_PROVIDER` set
+- Spreading activation graph traversal for cross-project recall
+- ACL filtering injected at SQL level for all search paths
 
 ## Module Structure
 
@@ -119,10 +136,16 @@ hive-memory enrich             # Run enrichment batch (--since, --type, --limit)
 hive-memory meeting <file>     # Process meeting transcript (--title, --output)
 hive-memory audit              # Run memory data quality audit
 hive-memory briefing           # Generate daily/weekly briefing (--type daily|weekly)
+hive-memory user create <name> # Create a user + API key
+hive-memory user list          # List all users
+hive-memory user revoke <id>   # Revoke a user
+hive-memory lifecycle          # Data lifecycle operations (--dry-run)
+hive-memory import-slack       # Import Slack export archive
+hive-memory backup <path>      # Backup SQLite database
 ```
 
 ## Conventions
 - `src/` — TypeScript source
-- `tests/` — vitest tests (125 tests across 11 files)
+- `tests/` — vitest tests (512 tests across 34 files)
 - Build: `npm run build`, Dev: `npm run dev`, Test: `npm test`
 - All new code uses SQLite; legacy JSON path kept for backward compat

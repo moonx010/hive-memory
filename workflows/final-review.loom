@@ -1,0 +1,174 @@
+/// Final Comprehensive Review Workflow
+///
+/// 6-role production readiness review: PM, Tech Lead, SRE, DevOps, Security, Devil.
+/// All agents use Opus for highest quality analysis.
+///
+/// Usage:
+///   loom run workflows/final-review.loom \
+///     -p project_dir=/Users/moonseokhoon/Desktop/project/hive-memory \
+///     --mode auto
+
+workflow FinalReview {
+  input {
+    project_dir: string
+  }
+
+  parallel reviews {
+
+    step pm_review {
+      engine: claude(opus-4-6)
+      prompt: """
+        You are a **Product Manager** reviewing ${project_dir} for production readiness.
+
+        Read: ${project_dir}/CLAUDE.md, ${project_dir}/README.md
+
+        Evaluate:
+        1. Is the product complete enough for team use?
+        2. What's the onboarding experience for a new team?
+        3. Any critical user flows missing?
+        4. Documentation quality?
+
+        Output: Grade (A-F), top 3 strengths, top 3 concerns, verdict (Ship/Hold).
+      """
+      output { pm_grade: string, pm_verdict: string, pm_concerns: string }
+    }
+
+    step tech_lead_review {
+      engine: claude(opus-4-6)
+      prompt: """
+        You are a **Tech Lead** reviewing ${project_dir} for code quality and architecture.
+
+        Read: ${project_dir}/src/db/schema.ts, ${project_dir}/src/db/database.ts (first 100 lines),
+              ${project_dir}/src/index.ts, ${project_dir}/src/tools/index.ts,
+              ${project_dir}/src/acl/policy.ts, ${project_dir}/src/search/hybrid.ts
+
+        Evaluate:
+        1. Code quality and technical debt
+        2. Test coverage gaps
+        3. Performance bottlenecks at scale
+        4. Architecture decisions to revisit
+
+        Run: cd ${project_dir} && npm run build && npm test
+        Output: Grade (A-F), top 3 strengths, top 3 concerns, verdict (Ship/Hold).
+      """
+      output { tech_grade: string, tech_verdict: string, tech_concerns: string }
+    }
+
+    step sre_review {
+      engine: claude(opus-4-6)
+      prompt: """
+        You are an **SRE Engineer** reviewing ${project_dir} for operational readiness.
+
+        Read: ${project_dir}/src/index.ts (HTTP server, health check, auto-sync),
+              ${project_dir}/deploy/, ${project_dir}/railway.json,
+              ${project_dir}/src/db/database.ts (pragma section)
+
+        Evaluate:
+        1. Health checks and monitoring
+        2. Single points of failure
+        3. Scaling limits (1M entities? 10M?)
+        4. Data durability and backup
+
+        Output: Grade (A-F), top 3 strengths, top 3 concerns, verdict (Ship/Hold).
+      """
+      output { sre_grade: string, sre_verdict: string, sre_concerns: string }
+    }
+
+    step devops_review {
+      engine: claude(opus-4-6)
+      prompt: """
+        You are a **DevOps Engineer** reviewing ${project_dir} deployment and CI/CD.
+
+        Read: ${project_dir}/railway.json, ${project_dir}/deploy/,
+              ${project_dir}/.github/workflows/ (if exists),
+              ${project_dir}/package.json, ${project_dir}/Procfile
+
+        Evaluate:
+        1. Deployment pipeline robustness
+        2. Environment and secrets management
+        3. Rollback capabilities
+        4. Build reproducibility
+
+        Output: Grade (A-F), top 3 strengths, top 3 concerns, verdict (Ship/Hold).
+      """
+      output { devops_grade: string, devops_verdict: string, devops_concerns: string }
+    }
+
+    step security_review {
+      engine: claude(opus-4-6)
+      prompt: """
+        You are a **Security Engineer** reviewing ${project_dir} for vulnerabilities.
+
+        Read: ${project_dir}/src/auth.ts, ${project_dir}/src/acl/policy.ts,
+              ${project_dir}/src/index.ts (auth middleware),
+              ${project_dir}/src/tools/user-tools.ts,
+              ${project_dir}/src/db/database.ts (search sanitization)
+
+        Evaluate:
+        1. Authentication strength
+        2. Authorization completeness (ACL enforcement)
+        3. Input validation and injection prevention
+        4. Data protection and audit trail
+
+        Output: Grade (A-F), top 3 strengths, top 3 concerns, verdict (Ship/Hold).
+      """
+      output { sec_grade: string, sec_verdict: string, sec_concerns: string }
+    }
+
+    step devil_review {
+      engine: claude(opus-4-6)
+      prompt: """
+        You are the **Devil's Advocate** reviewing ${project_dir} critically.
+
+        Read the entire codebase structure: ls -R ${project_dir}/src/
+        Read: ${project_dir}/CLAUDE.md, ${project_dir}/package.json
+
+        Be ruthlessly honest:
+        1. What's the weakest part of this system?
+        2. What would break first under real enterprise load?
+        3. Is this over-engineered for current needs?
+        4. What should have been built differently?
+
+        Output: Grade (A-F), top 3 strengths, top 3 concerns, verdict (Ship/Hold).
+      """
+      output { devil_grade: string, devil_verdict: string, devil_concerns: string }
+    }
+  }
+
+  step synthesize {
+    engine: claude(opus-4-6)
+    prompt: """
+      You are the **Chief Architect** synthesizing 6 review results into a final verdict.
+
+      PM: Grade=${reviews.pm_review.pm_grade}, Verdict=${reviews.pm_review.pm_verdict}
+          Concerns: ${reviews.pm_review.pm_concerns}
+
+      Tech Lead: Grade=${reviews.tech_lead_review.tech_grade}, Verdict=${reviews.tech_lead_review.tech_verdict}
+          Concerns: ${reviews.tech_lead_review.tech_concerns}
+
+      SRE: Grade=${reviews.sre_review.sre_grade}, Verdict=${reviews.sre_review.sre_verdict}
+          Concerns: ${reviews.sre_review.sre_concerns}
+
+      DevOps: Grade=${reviews.devops_review.devops_grade}, Verdict=${reviews.devops_review.devops_verdict}
+          Concerns: ${reviews.devops_review.devops_concerns}
+
+      Security: Grade=${reviews.security_review.sec_grade}, Verdict=${reviews.security_review.sec_verdict}
+          Concerns: ${reviews.security_review.sec_concerns}
+
+      Devil: Grade=${reviews.devil_review.devil_grade}, Verdict=${reviews.devil_review.devil_verdict}
+          Concerns: ${reviews.devil_review.devil_concerns}
+
+      Produce:
+      1. Overall grade (weighted average)
+      2. Final Ship/Hold decision
+      3. Top 5 action items (if any)
+      4. CEO summary (2 paragraphs)
+    """
+    output {
+      overall_grade: string
+      final_verdict: string
+      action_items: string
+      ceo_summary: string
+    }
+  }
+}

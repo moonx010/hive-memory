@@ -1,0 +1,8 @@
+services:
+  cortex:
+    build: .
+    ports: ["3179:3179"]
+    volumes: ["cortex-data:/data"]
+    env_file: .env
+volumes:
+  cortex-data:

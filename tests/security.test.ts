@@ -6,8 +6,8 @@ import { HiveDatabase } from "../src/db/database.js";
 import { CortexStore } from "../src/store.js";
 import { registerTools } from "../src/tools.js";
 import { createUser } from "../src/auth.js";
-import type { UserContext } from "../src/tools/index.js";
 import type { CortexConfig } from "../src/types.js";
+import { requestContext } from "../src/request-context.js";
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
   content: { type: "text"; text: string }[];
@@ -40,6 +40,15 @@ async function setupStore(dir: string): Promise<{ store: CortexStore; handlers: 
   return { store, handlers, mockServer } as unknown as { store: CortexStore; handlers: Map<string, ToolHandler> };
 }
 
+// Helper to call a tool handler inside a request context
+async function callWithContext(
+  handler: ToolHandler,
+  args: Record<string, unknown>,
+  ctx: { userId?: string; userName?: string },
+) {
+  return requestContext.run(ctx, () => handler(args));
+}
+
 // ── TASK-SEC-01: UserContext race condition fix ────────────────────────────────
 
 describe("TASK-SEC-01: per-request UserContext isolation", () => {
@@ -60,56 +69,44 @@ describe("TASK-SEC-01: per-request UserContext isolation", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it("UserContext is typed as Readonly", async () => {
-    // Compile-time check: the type must not allow direct mutation.
-    // We verify by ensuring the getter returns a frozen (immutable) object.
-    let captured: Readonly<UserContext> = Object.freeze({});
-    const handlers = new Map<string, ToolHandler>();
-    const mockServer = {
-      tool: (name: string, _desc: string, _schema: unknown, handler: ToolHandler) => {
-        handlers.set(name, handler);
-      },
-    };
+  it("AsyncLocalStorage returns correct userId per request context", async () => {
+    const ctxA = Object.freeze({ userId: "user-A", userName: "Alice" });
+    const ctxB = Object.freeze({ userId: "user-B", userName: "Bob" });
 
-    let currentCtx: Readonly<UserContext> = Object.freeze({ userId: "user-1", userName: "Alice" });
-    const getUserContext: GetUserContext = () => currentCtx;
+    const resultsA: string[] = [];
+    const resultsB: string[] = [];
 
-    registerTools(mockServer as Parameters<typeof registerTools>[0], store, getUserContext);
+    // Simulate two requests running with different contexts
+    await Promise.all([
+      requestContext.run(ctxA, async () => {
+        resultsA.push(requestContext.getStore()?.userId ?? "none");
+      }),
+      requestContext.run(ctxB, async () => {
+        resultsB.push(requestContext.getStore()?.userId ?? "none");
+      }),
+    ]);
 
-    // Verify the getter returns the expected value
-    captured = getUserContext();
-    expect(captured.userId).toBe("user-1");
-    expect(captured.userName).toBe("Alice");
-
-    // The object must be frozen (immutable)
-    expect(Object.isFrozen(captured)).toBe(true);
+    expect(resultsA[0]).toBe("user-A");
+    expect(resultsB[0]).toBe("user-B");
   });
 
   it("two concurrent requests see their own userId via the getter", async () => {
     const seenUserIds: string[] = [];
 
-    // Simulate two requests with different contexts
-    const ctxA: Readonly<UserContext> = Object.freeze({ userId: "user-A", userName: "Alice" });
-    const ctxB: Readonly<UserContext> = Object.freeze({ userId: "user-B", userName: "Bob" });
-
-    // Getter closure pattern: each request assigns its own frozen context
-    // and reads back from the getter immediately
-    let currentCtx: Readonly<UserContext> = Object.freeze({});
-    const getter: GetUserContext = () => currentCtx;
-
-    // Simulate request A
-    currentCtx = ctxA;
-    seenUserIds.push(getter().userId ?? "none");
-
-    // Simulate request B (would overwrite in the old mutable pattern)
-    currentCtx = ctxB;
-    seenUserIds.push(getter().userId ?? "none");
+    await Promise.all([
+      requestContext.run({ userId: "user-A" }, async () => {
+        seenUserIds[0] = requestContext.getStore()?.userId ?? "none";
+      }),
+      requestContext.run({ userId: "user-B" }, async () => {
+        seenUserIds[1] = requestContext.getStore()?.userId ?? "none";
+      }),
+    ]);
 
     expect(seenUserIds[0]).toBe("user-A");
     expect(seenUserIds[1]).toBe("user-B");
   });
 
-  it("getUserContext returns undefined context when no auth (local dev mode)", async () => {
+  it("getCurrentRequestContext returns undefined context when no request (local dev mode)", async () => {
     const handlers = new Map<string, ToolHandler>();
     const mockServer = {
       tool: (name: string, _desc: string, _schema: unknown, handler: ToolHandler) => {
@@ -117,10 +114,9 @@ describe("TASK-SEC-01: per-request UserContext isolation", () => {
       },
     };
 
-    // No context getter provided (stdio/local mode)
-    registerTools(mockServer as Parameters<typeof registerTools>[0], store, undefined);
+    registerTools(mockServer as Parameters<typeof registerTools>[0], store);
 
-    // memory_store should still work without a userContext
+    // memory_store should still work without a request context (stdio/local mode)
     const projectDir = await mkdtemp(join(tmpdir(), "cortex-proj-"));
     try {
       const registerHandler = handlers.get("project_register")!;
@@ -174,13 +170,7 @@ describe("TASK-SEC-02: user_manage admin authorization", () => {
       },
     };
 
-    // Mutable context for testing
-    const userContext: UserContext = {};
-
-    registerTools(mockServer as Parameters<typeof registerTools>[0], store, userContext);
-
-    // Store reference to test helper
-    (handlers as unknown as { _setCtx: (ctx: Readonly<UserContext>) => void })._setCtx = (c) => { Object.assign(userContext, c); };
+    registerTools(mockServer as Parameters<typeof registerTools>[0], store);
 
     await ctx.db.close();
     await rm(ctx.dir, { recursive: true, force: true });
@@ -190,22 +180,24 @@ describe("TASK-SEC-02: user_manage admin authorization", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  function setContext(ctx: Readonly<UserContext>) {
-    (handlers as unknown as { _setCtx: (ctx: Readonly<UserContext>) => void })._setCtx(ctx);
-  }
-
   it("system token (no userId) can call user_manage add", async () => {
-    setContext(Object.freeze({})); // no userId = system token
-    const result = await handlers.get("user_manage")!({ action: "add", name: "newuser" });
+    const result = await callWithContext(
+      handlers.get("user_manage")!,
+      { action: "add", name: "newuser" },
+      {}, // no userId = system token
+    );
     expect(result.isError).toBeFalsy();
     expect(result.content[0].text).toContain("User created");
   });
 
   it("member user calling user_manage returns error", async () => {
     const { user } = createUser(db, "member-user");
-    setContext(Object.freeze({ userId: user.id, userName: user.name }));
 
-    const result = await handlers.get("user_manage")!({ action: "add", name: "anotheruser" });
+    const result = await callWithContext(
+      handlers.get("user_manage")!,
+      { action: "add", name: "anotheruser" },
+      { userId: user.id, userName: user.name },
+    );
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("admin role");
   });
@@ -223,17 +215,23 @@ describe("TASK-SEC-02: user_manage admin authorization", () => {
       status: "active",
     });
 
-    setContext(Object.freeze({ userId: adminId, userName: "Admin User" }));
-    const result = await handlers.get("user_manage")!({ action: "add", name: "newuser2" });
+    const result = await callWithContext(
+      handlers.get("user_manage")!,
+      { action: "add", name: "newuser2" },
+      { userId: adminId, userName: "Admin User" },
+    );
     expect(result.isError).toBeFalsy();
     expect(result.content[0].text).toContain("User created");
   });
 
   it("user_manage list is also protected from non-admin members", async () => {
     const { user } = createUser(db, "list-member");
-    setContext(Object.freeze({ userId: user.id, userName: user.name }));
 
-    const result = await handlers.get("user_manage")!({ action: "list" });
+    const result = await callWithContext(
+      handlers.get("user_manage")!,
+      { action: "list" },
+      { userId: user.id, userName: user.name },
+    );
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("admin role");
   });
