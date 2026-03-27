@@ -29,6 +29,12 @@ interface CliArgs {
   tool?: string;
   token?: string;
   write?: boolean;
+  // label/entity command flags
+  subcommand?: string;
+  description?: string;
+  user?: string;
+  from?: string;
+  to?: string;
 }
 
 export function parseCliArgs(args: string[]): CliArgs {
@@ -92,6 +98,18 @@ export function parseCliArgs(args: string[]): CliArgs {
       case "--write":
         result.write = true;
         break;
+      case "--description":
+        result.description = args[++i];
+        break;
+      case "--user":
+        result.user = args[++i];
+        break;
+      case "--from":
+        result.from = args[++i];
+        break;
+      case "--to":
+        result.to = args[++i];
+        break;
       default:
         // Positional argument = content (for store command)
         if (!arg.startsWith("--")) {
@@ -111,6 +129,16 @@ export async function handleCli(
   args: string[],
 ): Promise<void> {
   const parsed = parseCliArgs(args);
+
+  // label and entity commands receive full args for subcommand parsing
+  if (parsed.command === "label") {
+    await handleLabel(store, initStore, args.slice(1));
+    return;
+  }
+  if (parsed.command === "entity") {
+    await handleEntity(store, initStore, args.slice(1));
+    return;
+  }
 
   switch (parsed.command) {
     case "store":
@@ -603,6 +631,138 @@ async function handleConnect(args: CliArgs): Promise<void> {
   }
 }
 
+async function handleLabel(
+  store: CortexStore,
+  initStore: () => Promise<void>,
+  args: string[],
+): Promise<void> {
+  const subcommand = args[0];
+  await initStore();
+  const db = store.database;
+
+  switch (subcommand) {
+    case "create": {
+      const name = args[1];
+      if (!name) {
+        console.error("Usage: hive-memory label create <name> [--description TEXT]");
+        process.exit(1);
+      }
+      const descIdx = args.indexOf("--description");
+      const description = descIdx !== -1 ? args[descIdx + 1] : undefined;
+      const { randomUUID } = await import("node:crypto");
+      const id = randomUUID();
+      db.createLabel(id, name, description);
+      console.log(`Label created.`);
+      console.log(`  ID:   ${id}`);
+      console.log(`  Name: ${name}`);
+      if (description) console.log(`  Description: ${description}`);
+      break;
+    }
+
+    case "list": {
+      const userIdx = args.indexOf("--user");
+      const userId = userIdx !== -1 ? args[userIdx + 1] : undefined;
+      if (userId) {
+        const labelNames = db.getUserLabels(userId);
+        if (labelNames.length === 0) {
+          console.log(`No labels assigned to user ${userId}.`);
+          break;
+        }
+        console.log(`Labels for user ${userId}:`);
+        for (const name of labelNames) {
+          console.log(`  ${name}`);
+        }
+      } else {
+        const labels = db.listLabels();
+        if (labels.length === 0) {
+          console.log("No labels found.");
+          break;
+        }
+        const header = "ID                                    Name                         Description";
+        console.log(header);
+        console.log("-".repeat(header.length));
+        for (const l of labels) {
+          const id = l.id.padEnd(36);
+          const name = l.name.padEnd(28);
+          const desc = l.description ?? "";
+          console.log(`${id}  ${name}  ${desc}`);
+        }
+      }
+      break;
+    }
+
+    case "assign": {
+      const userId = args[1];
+      const labelName = args[2];
+      if (!userId || !labelName) {
+        console.error("Usage: hive-memory label assign <user-id> <label-name>");
+        process.exit(1);
+      }
+      const label = db.getLabelByName(labelName);
+      if (!label) {
+        console.error(`Label not found: ${labelName}`);
+        process.exit(1);
+      }
+      db.assignUserLabel(userId, label.id);
+      console.log(`Label "${labelName}" assigned to user ${userId}.`);
+      break;
+    }
+
+    case "revoke": {
+      const userId = args[1];
+      const labelName = args[2];
+      if (!userId || !labelName) {
+        console.error("Usage: hive-memory label revoke <user-id> <label-name>");
+        process.exit(1);
+      }
+      const label = db.getLabelByName(labelName);
+      if (!label) {
+        console.error(`Label not found: ${labelName}`);
+        process.exit(1);
+      }
+      db.revokeUserLabel(userId, label.id);
+      console.log(`Label "${labelName}" revoked from user ${userId}.`);
+      break;
+    }
+
+    default:
+      console.error(`Unknown label subcommand: ${subcommand ?? "(none)"}`);
+      console.error("Available: label create <name> [--description TEXT], label list [--user USER_ID], label assign <user-id> <label-name>, label revoke <user-id> <label-name>");
+      process.exit(1);
+  }
+}
+
+async function handleEntity(
+  store: CortexStore,
+  initStore: () => Promise<void>,
+  args: string[],
+): Promise<void> {
+  const subcommand = args[0];
+  await initStore();
+  const db = store.database;
+
+  switch (subcommand) {
+    case "reassign": {
+      const fromIdx = args.indexOf("--from");
+      const toIdx = args.indexOf("--to");
+      const fromUserId = fromIdx !== -1 ? args[fromIdx + 1] : undefined;
+      const toUserId = toIdx !== -1 ? args[toIdx + 1] : undefined;
+      if (!fromUserId || !toUserId) {
+        console.error("Usage: hive-memory entity reassign --from <user-id> --to <user-id>");
+        process.exit(1);
+      }
+      const count = db.reassignEntityOwnership(fromUserId, toUserId);
+      console.log(`Reassigned ${count} entit${count === 1 ? "y" : "ies"} from ${fromUserId} to ${toUserId}.`);
+      break;
+    }
+
+    default:
+      console.error(`Unknown entity subcommand: ${subcommand ?? "(none)"}`);
+      console.error("Available: entity reassign --from <user-id> --to <user-id>");
+      process.exit(1);
+  }
+}
+
 function printUsage(): void {
   console.log(`Usage: hive-memory <command> [options]
 
@@ -621,6 +781,8 @@ Commands:
   analyze   Analyze workflow patterns and generate insights
   patterns  Analyze aggregated working patterns (--since, --project)
   connect   Generate MCP config for Claude Code or Cursor (--url, --key, --tool, --write)
+  label     Manage access-control labels (create, list, assign, revoke)
+  entity    Manage entity ownership (reassign)
 
   hook session-end    Auto-save session (Claude Code hook)
 

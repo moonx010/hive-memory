@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { HiveDatabase } from "../db/database.js";
 import type { Entity } from "../types.js";
-import type { SafeToolFn } from "./index.js";
+import type { SafeToolFn, ACLResolver, GetUserContext } from "./index.js";
 
 // ── Helpers ──
 
@@ -21,7 +21,13 @@ function recencyWeight(iso: string): number {
   return 1 / (1 + ageDays / 30);
 }
 
-export function registerTrailTools(safeTool: SafeToolFn, db: HiveDatabase) {
+export function registerTrailTools(safeTool: SafeToolFn, db: HiveDatabase, aclResolver?: ACLResolver, getUserContext?: GetUserContext) {
+  // Helper to resolve ACL for the current request
+  function resolveAcl() {
+    if (!aclResolver || !getUserContext) return undefined;
+    return aclResolver(getUserContext(), db) ?? undefined;
+  }
+
   // ── memory_trail ──
 
   safeTool(
@@ -41,9 +47,10 @@ export function registerTrailTools(safeTool: SafeToolFn, db: HiveDatabase) {
       const topic = args.topic as string;
       const domains = args.domains as string[] | undefined;
       const limit = (args.limit as number | undefined) ?? 20;
+      const acl = resolveAcl();
 
       // FTS5 search across all domains
-      const results = db.searchEntities(topic, { limit: limit * 3 });
+      const results = db.searchEntities(topic, { limit: limit * 3, acl });
 
       if (results.length === 0) {
         return {
@@ -134,7 +141,8 @@ export function registerTrailTools(safeTool: SafeToolFn, db: HiveDatabase) {
       const limit = (args.limit as number | undefined) ?? 5;
 
       // Search broadly so we can rank authors
-      const results = db.searchEntities(topic, { limit: 100 });
+      const acl = resolveAcl();
+      const results = db.searchEntities(topic, { limit: 100, acl });
 
       if (results.length === 0) {
         return {
@@ -216,10 +224,11 @@ export function registerTrailTools(safeTool: SafeToolFn, db: HiveDatabase) {
     },
     async (args) => {
       const dryRun = (args.dry_run as boolean | undefined) ?? true;
+      const acl = resolveAcl();
 
       // 1. Find entities past their expiresAt
       const now = new Date().toISOString();
-      const candidateEntities = db.listEntities({ sort: "updated_at", order: "asc", limit: 10000 });
+      const candidateEntities = db.listEntities({ sort: "updated_at", order: "asc", limit: 10000, acl });
       const trueExpired = candidateEntities.filter(
         (e) => e.expiresAt && e.expiresAt <= now && e.status !== "archived",
       );

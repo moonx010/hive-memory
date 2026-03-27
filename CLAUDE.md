@@ -135,8 +135,39 @@ hive-memory analyze              # Analyze workflow patterns and generate insigh
 hive-memory patterns             # Analyze aggregated working patterns (--since, --project)
 hive-memory connect              # Generate MCP config for Claude Code or Cursor
 hive-memory user <action>        # Manage users (create, list, revoke) — requires CORTEX_AUTH_TOKEN
+hive-memory label <action>       # Manage ACL labels (create, list, assign, revoke)
+hive-memory entity reassign      # Reassign entity ownership (--from <user-id> --to <user-id>)
 hive-memory hook session-end     # Auto session capture (Claude Code hook)
 ```
+
+## Access Control (CORTEX_ACL)
+
+Set `CORTEX_ACL=on` to enable per-entity access control enforcement. Default is off.
+
+```bash
+CORTEX_ACL=on   # Enable ACL enforcement on all queries
+CORTEX_ACL=off  # (default) All entities visible — backward-compatible single-user mode
+```
+
+**Visibility levels** (most to least restrictive): `dm > private > team > org > public`
+- `dm`: accessible only by participants listed in `acl_members` (admins excluded)
+- `private`: accessible by owner + admins (not DM participants)
+- `team`: accessible by all authenticated users
+- `org`, `public`: broadest access
+
+**Label management workflow:**
+```bash
+hive-memory label create hr --description "HR team access"
+hive-memory label assign <user-id> hr
+hive-memory label list
+hive-memory label revoke <user-id> hr
+```
+
+**Label gate logic:** OR — user satisfies access if they have all `required_labels`, OR are listed in `acl_members`.
+
+**Orphan cleanup:** `db.cleanupOrphanedEntities(90)` — archives private/DM entities owned by users revoked >90 days ago; clears `owner_id` on team/org/public entities.
+
+**Backward compat:** `CORTEX_ACL=off` (default) passes all existing tests unchanged. Entities without `owner_id` are treated as `team` visibility.
 
 ## Deployment
 - **Railway**: `railway.json` configures Nixpacks build + `node dist/index.js` start command

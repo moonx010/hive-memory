@@ -1,12 +1,14 @@
 import { z } from "zod";
 import type { HiveDatabase } from "../db/database.js";
-import type { SafeToolFn } from "./index.js";
+import type { SafeToolFn, ACLResolver, GetUserContext } from "./index.js";
 import { WorkflowAdvisor } from "../advisor/index.js";
 import { PatternAnalyzer } from "../advisor/patterns.js";
 
 export function registerAdvisorTools(
   safeTool: SafeToolFn,
   db: HiveDatabase,
+  _aclResolver?: ACLResolver,
+  _getUserContext?: GetUserContext,
 ): void {
   safeTool(
     "workflow_analyze",

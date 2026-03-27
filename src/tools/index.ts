@@ -12,6 +12,8 @@ import { registerMeetingTools } from "./meeting-tools.js";
 import { registerStewardTools } from "./steward-tools.js";
 import { registerAdvisorTools } from "./advisor-tools.js";
 import { registerUserTools } from "./user-tools.js";
+import type { ACLContext } from "../acl/types.js";
+import type { HiveDatabase } from "../db/database.js";
 
 export type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 export type ToolHandler = (args: Record<string, unknown>) => Promise<ToolResult>;
@@ -30,6 +32,28 @@ export interface UserContext {
 
 /** Getter function that returns the current request's frozen UserContext. */
 export type GetUserContext = () => Readonly<UserContext>;
+
+/**
+ * Resolver function that builds an ACLContext from the current user context.
+ * Returns null when ACL is disabled or the user cannot be resolved.
+ */
+export type ACLResolver = (userContext: Readonly<UserContext>, db: HiveDatabase) => ACLContext | null;
+
+/** Build an ACLResolver closure. When CORTEX_ACL is not 'on', always returns null. */
+function createACLResolver(): ACLResolver {
+  return (userContext: Readonly<UserContext>, db: HiveDatabase): ACLContext | null => {
+    if (process.env.CORTEX_ACL !== 'on') return null;
+    const { userId } = userContext;
+    if (!userId) return null;
+    const user = db.getUserById(userId);
+    if (!user) return null;
+    return {
+      userId,
+      userRole: user.role === 'admin' ? 'admin' : 'member',
+      userLabels: db.getUserLabels(userId),
+    };
+  };
+}
 
 function wrapHandler(handler: ToolHandler): ToolHandler {
   return async (args) => {
@@ -64,6 +88,7 @@ export function registerTools(
     server.tool(name, description, schema, wrapHandler(handler));
 
   const db = store.database;
+  const aclResolver = createACLResolver();
 
   // v2 tools (existing — backward compatible)
   registerProjectTools(safeTool, store);
@@ -71,13 +96,13 @@ export function registerTools(
   registerSessionTools(safeTool, store, getUserContext);
 
   // v3 new tools
-  registerBrowseTools(safeTool, db);
-  registerTrailTools(safeTool, db);
+  registerBrowseTools(safeTool, db, aclResolver, getUserContext);
+  registerTrailTools(safeTool, db, aclResolver, getUserContext);
   registerConnectorTools(safeTool, db, store);
   registerTeamTools(safeTool, store);
   registerContextTools(safeTool, store);
   registerMeetingTools(safeTool, store);
   registerStewardTools(safeTool, store);
-  registerAdvisorTools(safeTool, db);
+  registerAdvisorTools(safeTool, db, aclResolver, getUserContext);
   registerUserTools(safeTool, db, getUserContext);
 }

@@ -29,6 +29,7 @@ import { migrateAllProjects, scanProjectReferences, syncReferences } from "./sto
 import { HiveDatabase } from "./db/database.js";
 import type { ListEntitiesOptions, SearchEntitiesOptions } from "./db/database.js";
 import type { Entity } from "./types.js";
+import type { ACLContext } from "./acl/types.js";
 import type { ConnectorRegistry, RawDocument } from "./connectors/types.js";
 import { createConnectorRegistry } from "./connectors/types.js";
 import { ConnectorStateMachine } from "./connectors/state-machine.js";
@@ -329,6 +330,20 @@ export class CortexStore {
   }
 
   /**
+   * Build an ACLContext for a given userId by looking up their role and labels.
+   * Returns null if the user does not exist.
+   */
+  buildACLContext(userId: string): ACLContext | null {
+    const user = this.database.getUserById(userId);
+    if (!user) return null;
+    return {
+      userId,
+      userRole: user.role === 'admin' ? 'admin' : 'member',
+      userLabels: this.database.getUserLabels(userId),
+    };
+  }
+
+  /**
    * Recall memories using FTS5 + spreading activation (v3 DB) or keyword search (v2 hive fallback).
    *
    * v3 flow (when _db is initialized):
@@ -339,12 +354,12 @@ export class CortexStore {
    *
    * v2 fallback: uses hive keyword search (HiveSearch).
    */
-  async recallMemories(query: string, projectId?: string, limit = 5, agentId?: string): Promise<HiveSearchResult[]> {
+  async recallMemories(query: string, projectId?: string, limit = 5, agentId?: string, acl?: ACLContext): Promise<HiveSearchResult[]> {
     // Only use the v3 DB path when it was explicitly set — otherwise fall back to the v2 hive.
     // The `database` getter lazily creates a HiveDatabase for browse/tool use, but that
     // empty SQLite DB shouldn't override the populated v2 hive for recall.
     if (this._dbExplicit && this._db) {
-      return this._recallViaDb(query, projectId, limit, agentId);
+      return this._recallViaDb(query, projectId, limit, agentId, acl);
     }
     return this.memories.recallMemories(query, projectId, limit, agentId);
   }
@@ -354,11 +369,13 @@ export class CortexStore {
     projectId: string | undefined,
     limit: number,
     agentId: string | undefined,
+    acl?: ACLContext,
   ): HiveSearchResult[] {
     const db = this._db!;
     const searchOptions: SearchEntitiesOptions = {
       ...(projectId ? { project: projectId } : {}),
       limit: limit * 3,
+      ...(acl ? { acl } : {}),
     };
 
     // Step 1: FTS5 search
@@ -474,8 +491,8 @@ export class CortexStore {
     return this.database.searchEntities(query, options);
   }
 
-  getEntityById(id: string): Entity | null {
-    return this.database.getEntity(id);
+  getEntityById(id: string, acl?: ACLContext): Entity | null {
+    return this.database.getEntity(id, acl);
   }
 
   // ── v3 Connector sync ──

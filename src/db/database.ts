@@ -5,6 +5,8 @@ import { homedir } from "node:os";
 import { mkdirSync } from "node:fs";
 import { createSchema } from "./schema.js";
 import type { Entity, ConnectorConfig } from "../types.js";
+import type { ACLContext } from "../acl/types.js";
+import { defaultACLPolicy } from "../acl/policy.js";
 
 // Re-export Entity so consumers can import it from this module
 export type { Entity } from "../types.js";
@@ -187,6 +189,8 @@ export interface ListEntitiesOptions {
   unenrichedOnly?: boolean;
   /** When true, only return entities with non-empty keywords array */
   hasKeywords?: boolean;
+  /** ACL context for access filtering (only active when CORTEX_ACL=on) */
+  acl?: ACLContext;
 }
 
 export interface SearchEntitiesOptions {
@@ -195,6 +199,8 @@ export interface SearchEntitiesOptions {
   domain?: string;
   namespace?: string;
   limit?: number;
+  /** ACL context for access filtering (only active when CORTEX_ACL=on) */
+  acl?: ACLContext;
 }
 
 export interface CountEntitiesOptions {
@@ -203,6 +209,8 @@ export interface CountEntitiesOptions {
   domain?: string;
   namespace?: string;
   status?: string;
+  /** ACL context for access filtering (only active when CORTEX_ACL=on) */
+  acl?: ACLContext;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -463,11 +471,19 @@ export class HiveDatabase {
     this.db.prepare("DELETE FROM entities WHERE id = ?").run(id);
   }
 
-  getEntity(id: string): Entity | null {
+  getEntity(id: string, acl?: ACLContext): Entity | null {
     const row = this.db
       .prepare("SELECT * FROM entities WHERE id = ?")
       .get(id) as EntityRow | undefined;
-    return row ? rowToEntity(row) : null;
+    if (!row) return null;
+    const entity = rowToEntity(row);
+
+    const aclEnabled = process.env.CORTEX_ACL === 'on';
+    if (aclEnabled && acl) {
+      if (!defaultACLPolicy.canRead(entity, acl)) return null;
+    }
+
+    return entity;
   }
 
   listEntities(options: ListEntitiesOptions = {}): Entity[] {
@@ -485,7 +501,15 @@ export class HiveDatabase {
       offset = 0,
       unenrichedOnly = false,
       hasKeywords = false,
+      acl,
     } = options;
+
+    const aclEnabled = process.env.CORTEX_ACL === 'on';
+
+    // Fail closed: ACL enabled but no context → return empty
+    if (aclEnabled && !acl) {
+      return [];
+    }
 
     const conditions: string[] = [];
     const params: Record<string, unknown> = {};
@@ -533,6 +557,17 @@ export class HiveDatabase {
       conditions.push("keywords != '[]'");
     }
 
+    // ACL WHERE injection — listEntities uses plain table alias, not "e."
+    // We wrap with a subquery alias to use "e." prefix from policy clause
+    let aclClause = "";
+    if (aclEnabled && acl) {
+      const { clause, params: aclParams } = defaultACLPolicy.sqlWhereClause(acl);
+      // The policy clause uses "e." prefix, so we need to handle it in a subquery
+      // We'll add it directly but replace "e." with empty string since this is a flat query
+      aclClause = clause;
+      Object.assign(params, aclParams);
+    }
+
     const where =
       conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
@@ -551,17 +586,31 @@ export class HiveDatabase {
     params.limit = limit;
     params.offset = offset;
 
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM entities ${where} ORDER BY ${sortCol} ${sortDir} LIMIT @limit OFFSET @offset`,
-      )
-      .all(params) as EntityRow[];
+    let sql: string;
+    if (aclEnabled && acl && aclClause) {
+      // Use subquery with alias "e" to match policy clause
+      const whereClause = conditions.length > 0
+        ? `WHERE ${conditions.join(" AND ")} AND ${aclClause}`
+        : `WHERE ${aclClause}`;
+      sql = `SELECT * FROM entities e ${whereClause} ORDER BY ${sortCol} ${sortDir} LIMIT @limit OFFSET @offset`;
+    } else {
+      sql = `SELECT * FROM entities ${where} ORDER BY ${sortCol} ${sortDir} LIMIT @limit OFFSET @offset`;
+    }
+
+    const rows = this.db.prepare(sql).all(params) as EntityRow[];
 
     return rows.map(rowToEntity);
   }
 
   searchEntities(query: string, options: SearchEntitiesOptions = {}): Entity[] {
-    const { project, entityType, domain, namespace, limit = 20 } = options;
+    const { project, entityType, domain, namespace, limit = 20, acl } = options;
+
+    const aclEnabled = process.env.CORTEX_ACL === 'on';
+
+    // Fail closed: ACL enabled but no context → return empty
+    if (aclEnabled && !acl) {
+      return [];
+    }
 
     const sanitizedQuery = sanitizeFTS5Query(query);
     // If sanitization strips everything, return empty results rather than running a broken query.
@@ -587,6 +636,13 @@ export class HiveDatabase {
       params.namespace = namespace;
     }
 
+    // ACL WHERE injection
+    if (aclEnabled && acl) {
+      const { clause, params: aclParams } = defaultACLPolicy.sqlWhereClause(acl);
+      extraConditions.push(clause);
+      Object.assign(params, aclParams);
+    }
+
     const extraWhere =
       extraConditions.length > 0
         ? `AND ${extraConditions.join(" AND ")}`
@@ -609,37 +665,51 @@ export class HiveDatabase {
   }
 
   countEntities(options: CountEntitiesOptions = {}): number {
-    const { project, entityType, domain, namespace, status = "active" } = options;
+    const { project, entityType, domain, namespace, status = "active", acl } = options;
+
+    const aclEnabled = process.env.CORTEX_ACL === 'on';
+
+    // Fail closed: ACL enabled but no context → return 0
+    if (aclEnabled && !acl) {
+      return 0;
+    }
 
     const conditions: string[] = [];
     const params: Record<string, unknown> = {};
 
     if (project !== undefined) {
-      conditions.push("project = @project");
+      conditions.push("e.project = @project");
       params.project = project;
     }
     if (entityType !== undefined) {
-      conditions.push("entity_type = @entityType");
+      conditions.push("e.entity_type = @entityType");
       params.entityType = entityType;
     }
     if (domain !== undefined) {
-      conditions.push("domain = @domain");
+      conditions.push("e.domain = @domain");
       params.domain = domain;
     }
     if (namespace !== undefined) {
-      conditions.push("namespace = @namespace");
+      conditions.push("e.namespace = @namespace");
       params.namespace = namespace;
     }
     if (status !== undefined) {
-      conditions.push("status = @status");
+      conditions.push("e.status = @status");
       params.status = status;
+    }
+
+    // ACL WHERE injection
+    if (aclEnabled && acl) {
+      const { clause, params: aclParams } = defaultACLPolicy.sqlWhereClause(acl);
+      conditions.push(clause);
+      Object.assign(params, aclParams);
     }
 
     const where =
       conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
     const result = this.db
-      .prepare(`SELECT COUNT(*) as cnt FROM entities ${where}`)
+      .prepare(`SELECT COUNT(*) as cnt FROM entities e ${where}`)
       .get(params) as { cnt: number };
 
     return result.cnt;
@@ -1284,9 +1354,143 @@ export class HiveDatabase {
     this.db.prepare("UPDATE users SET status = ? WHERE id = ?").run(status, userId);
   }
 
+  // ── Label methods ───────────────────────────────────────────────────────────
+
+  createLabel(id: string, name: string, description?: string): void {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO labels (id, name, description, created_at)
+      VALUES (?, ?, ?, ?)
+    `).run(id, name, description ?? null, now);
+  }
+
+  listLabels(): { id: string; name: string; description?: string; createdAt: string }[] {
+    const rows = this.db
+      .prepare("SELECT * FROM labels ORDER BY name ASC")
+      .all() as { id: string; name: string; description: string | null; created_at: string }[];
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      description: r.description ?? undefined,
+      createdAt: r.created_at,
+    }));
+  }
+
+  getLabelByName(name: string): { id: string; name: string; description?: string; createdAt: string } | null {
+    const row = this.db
+      .prepare("SELECT * FROM labels WHERE name = ?")
+      .get(name) as { id: string; name: string; description: string | null; created_at: string } | undefined;
+    if (!row) return null;
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description ?? undefined,
+      createdAt: row.created_at,
+    };
+  }
+
+  deleteLabel(id: string): void {
+    this.db.prepare("DELETE FROM labels WHERE id = ?").run(id);
+  }
+
+  assignUserLabel(userId: string, labelId: string, grantedBy?: string): void {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT OR IGNORE INTO user_labels (user_id, label_id, granted_by, granted_at)
+      VALUES (?, ?, ?, ?)
+    `).run(userId, labelId, grantedBy ?? null, now);
+  }
+
+  revokeUserLabel(userId: string, labelId: string): void {
+    this.db.prepare(
+      "DELETE FROM user_labels WHERE user_id = ? AND label_id = ?",
+    ).run(userId, labelId);
+  }
+
+  getUserLabels(userId: string): string[] {
+    const rows = this.db.prepare(`
+      SELECT l.name
+      FROM user_labels ul
+      JOIN labels l ON ul.label_id = l.id
+      WHERE ul.user_id = ?
+    `).all(userId) as { name: string }[];
+    return rows.map((r) => r.name);
+  }
+
+  // ── Entity ownership methods ─────────────────────────────────────────────────
+
+  updateUserRevokedAt(userId: string, revokedAt: string): void {
+    this.db.prepare("UPDATE users SET revoked_at = ? WHERE id = ?").run(revokedAt, userId);
+  }
+
+  reassignEntityOwnership(fromUserId: string, toUserId: string): number {
+    const result = this.db.prepare(
+      "UPDATE entities SET owner_id = ? WHERE owner_id = ?",
+    ).run(toUserId, fromUserId);
+    // For DM entities under the new owner: add new user to acl_members
+    const dmEntities = this.db.prepare(
+      "SELECT id, acl_members FROM entities WHERE owner_id = ? AND visibility = 'dm'",
+    ).all(toUserId) as { id: string; acl_members: string }[];
+    for (const e of dmEntities) {
+      const members: string[] = JSON.parse(e.acl_members ?? '[]');
+      if (!members.includes(toUserId)) {
+        members.push(toUserId);
+        this.db.prepare("UPDATE entities SET acl_members = ? WHERE id = ?")
+          .run(JSON.stringify(members), e.id);
+      }
+    }
+    return result.changes as number;
+  }
+
+  cleanupOrphanedEntities(gracePeriodDays = 90): { archived: number; cleared: number } {
+    const cutoff = new Date(Date.now() - gracePeriodDays * 24 * 60 * 60 * 1000).toISOString();
+
+    // Archive private/DM entities owned by users revoked >gracePeriodDays ago
+    const archiveResult = this.db.prepare(`
+      UPDATE entities SET status = 'archived'
+      WHERE owner_id IN (
+        SELECT id FROM users WHERE status = 'revoked' AND revoked_at IS NOT NULL AND revoked_at < ?
+      )
+      AND visibility IN ('private', 'dm')
+      AND status != 'archived'
+    `).run(cutoff);
+
+    // Clear owner_id for team/org/public entities owned by revoked users
+    const clearResult = this.db.prepare(`
+      UPDATE entities SET owner_id = NULL
+      WHERE owner_id IN (
+        SELECT id FROM users WHERE status = 'revoked' AND revoked_at IS NOT NULL AND revoked_at < ?
+      )
+      AND visibility NOT IN ('private', 'dm')
+    `).run(cutoff);
+
+    return {
+      archived: archiveResult.changes as number,
+      cleared: clearResult.changes as number,
+    };
+  }
+
   // ── Lifecycle ───────────────────────────────────────────────────────────────
 
   close(): void {
     this.db.close();
+  }
+
+  /** Emit a startup warning when >1 user exists and CORTEX_ACL is not 'on'. */
+  warnIfAclDisabled(): void {
+    if (process.env.CORTEX_ACL === 'on') return;
+    try {
+      const result = this.db
+        .prepare("SELECT COUNT(*) as cnt FROM users WHERE status = 'active'")
+        .get() as { cnt: number };
+      if (result.cnt > 1) {
+        console.error(
+          `[hive-memory] WARNING: ${result.cnt} active users exist but CORTEX_ACL is not 'on'. ` +
+          `Set CORTEX_ACL=on to enforce access control.`,
+        );
+      }
+    } catch {
+      // table may not exist in tests
+    }
   }
 }
