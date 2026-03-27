@@ -367,6 +367,7 @@ export class HiveDatabase {
     this.db = new BetterSqlite3(resolvedPath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
+    this.db.pragma("busy_timeout = 5000");
 
     createSchema(this.db);
 

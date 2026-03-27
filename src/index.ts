@@ -118,15 +118,34 @@ async function main() {
       version: pkg.version as string,
     });
 
-    // Mutable context updated per-request before tool handlers are invoked.
-    const userContext = { userId: undefined as string | undefined, userName: undefined as string | undefined };
-    registerTools(server, store, userContext);
+    // Per-request user context via closure. The getter always returns the
+    // current request's context, avoiding race conditions between concurrent requests.
+    let _currentUserContext: { userId?: string; userName?: string } = {};
+    const userContextProxy = new Proxy({} as { userId?: string; userName?: string }, {
+      get(_target, prop) {
+        return (_currentUserContext as Record<string | symbol, unknown>)[prop];
+      },
+    });
+    registerTools(server, store, userContextProxy);
 
     const slackBotEnabled = process.env["SLACK_BOT_ENABLED"] === "true";
     const slackSigningSecret = process.env["SLACK_SIGNING_SECRET"] ?? "";
     const slackToken = process.env["SLACK_TOKEN"] ?? "";
 
     const httpServer = createServer(async (req, res) => {
+      // ── Health check ─────────────────────────────────────────────────────────
+      if (req.url === "/health" && req.method === "GET") {
+        try {
+          store.database.countEntities({});
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ status: "ok", version: pkg.version }));
+        } catch {
+          res.writeHead(503, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ status: "error" }));
+        }
+        return;
+      }
+
       // ── Slack Events API route ──────────────────────────────────────────────
       if (slackBotEnabled && req.url === "/slack/events" && req.method === "POST") {
         // Collect body bytes (needed for signature verification)
@@ -184,9 +203,8 @@ async function main() {
         res.end("Unauthorized");
         return;
       }
-      // Update shared context for this request's tool handlers.
-      userContext.userId = userId;
-      userContext.userName = userName;
+      // Set per-request context (Proxy reads from this variable)
+      _currentUserContext = Object.freeze({ userId, userName });
 
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       res.on("close", () => { transport.close(); });
