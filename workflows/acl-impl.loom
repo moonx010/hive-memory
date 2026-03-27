@@ -1,0 +1,211 @@
+/// ACL Implementation Workflow
+///
+/// Implements the Access Control Layer for hive-memory in 4 phases.
+/// Phase 0: P0 security fixes (must ship before ACL)
+/// Phase 1: ACL types + policy + schema
+/// Phase 2: Database + tool integration
+/// Phase 3: Source inheritance + enrichment
+///
+/// Usage:
+///   loom run workflows/acl-impl.loom \
+///     -p project_dir=/Users/moonseokhoon/Desktop/project/hive-memory \
+///     --mode auto
+
+workflow ACLImpl {
+  input {
+    project_dir: string
+  }
+
+  /// Phase 0: P0 Security Fixes
+  step security_fixes {
+    engine: claude(sonnet-4-6)
+    prompt: """
+      You are implementing P0 security fixes for hive-memory at ${project_dir}.
+
+      Read the task spec: cat ${project_dir}/openspec/changes/access-control-layer/tasks.md
+      Read current code: cat ${project_dir}/src/tools/index.ts
+      Read auth: cat ${project_dir}/src/auth.ts
+      Read db search: grep -n 'MATCH\|searchEntities' ${project_dir}/src/db/database.ts
+
+      Implement THREE tasks:
+
+      ## TASK-SEC-01: Fix shared mutable UserContext
+      - In src/index.ts, the UserContext is shared mutably across requests
+      - Create a new frozen UserContext per request
+      - Use closure capture or AsyncLocalStorage
+
+      ## TASK-SEC-02: Admin auth check on user_manage
+      - In src/tools/user-tools.ts, add role check
+      - Only admin or system token can manage users
+
+      ## TASK-SEC-03: FTS5 query sanitization
+      - In src/db/database.ts, sanitize FTS5 MATCH input
+      - Strip operators: OR, AND, NOT, *, ", (, ), NEAR, column: prefixes
+
+      After implementing:
+      1. npm run build — fix errors
+      2. npm test — fix regressions
+      3. npm run lint — fix warnings
+      4. Report what was changed
+    """
+    output {
+      files_changed: string
+      build_pass: bool
+      test_pass: bool
+    }
+  }
+
+  /// Phase 1: ACL Types + Policy + Schema
+  step acl_core {
+    engine: claude(sonnet-4-6)
+    prompt: """
+      You are implementing ACL core types, policy, and schema for hive-memory at ${project_dir}.
+
+      Read: cat ${project_dir}/openspec/changes/access-control-layer/tasks.md
+      Read: cat ${project_dir}/docs/acl-decisions.md
+      Read: cat ${project_dir}/src/db/schema.ts
+      Read: cat ${project_dir}/src/types.ts | head -100
+
+      Implement FIVE tasks:
+
+      ## TASK-ACL-01: Create src/acl/types.ts
+      - VisibilityLevel: 'private' | 'dm' | 'team' | 'org' | 'public'
+      - ACLContext: userId, userRole, userLabels
+      - ACLPolicy: canRead, canWrite, sqlWhereClause
+      - ACLResolver type
+
+      ## TASK-ACL-02: Create src/acl/policy.ts — DefaultACLPolicy
+      - canRead with DM exclusion for admin
+      - sqlWhereClause with OR logic for labels + acl_members
+      - All SQL parameterized
+
+      ## TASK-ACL-03: Tests for DefaultACLPolicy
+      - Create tests/acl-policy.test.ts
+      - 12+ test cases per task spec
+
+      ## TASK-ACL-04: Schema v5 in src/db/schema.ts
+      - owner_id, required_labels, acl_members columns
+      - labels + user_labels tables
+      - Indexes including partial index
+      - Migration: personal → private
+
+      ## TASK-ACL-05: Update src/types.ts
+      - Expand VisibilityType
+      - Add ownerId, requiredLabels, aclMembers to Entity
+
+      After implementing:
+      1. npm run build — fix errors
+      2. npm test — all pass
+      3. Report files changed
+    """
+    output {
+      files_changed: string
+      build_pass: bool
+      test_pass: bool
+      new_tests: number
+    }
+  }
+
+  /// Phase 2: Database + Tool Integration
+  step db_integration {
+    engine: claude(sonnet-4-6)
+    prompt: """
+      You are implementing ACL enforcement in database queries and tools for hive-memory at ${project_dir}.
+
+      Read tasks: cat ${project_dir}/openspec/changes/access-control-layer/tasks.md
+      Read ACL types: cat ${project_dir}/src/acl/types.ts
+      Read ACL policy: cat ${project_dir}/src/acl/policy.ts
+      Read database: cat ${project_dir}/src/db/database.ts | head -200
+      Read store: cat ${project_dir}/src/store.ts | head -50
+      Read tools index: cat ${project_dir}/src/tools/index.ts
+
+      Implement FOUR tasks:
+
+      ## TASK-ACL-06: Modify database.ts — ACL enforcement
+      - Add acl to SearchEntitiesOptions, ListEntitiesOptions
+      - Inject ACL WHERE clause in searchEntities, listEntities
+      - canRead post-check in getEntity
+      - CORTEX_ACL env check
+      - rowToEntity mapping for new columns
+
+      ## TASK-ACL-07: Integration tests
+      - tests/acl-integration.test.ts
+      - 10+ test cases with multi-user setup
+
+      ## TASK-ACL-08: Modify store.ts — ACL context threading
+      - ACL parameter on recall, search, list methods
+      - Build ACLContext from userId
+
+      ## TASK-ACL-09: Modify ALL tool handlers
+      - ACLResolver passed to every tool registration
+      - No tool gets raw db without ACL
+      - memory_store sets owner_id
+
+      After: build + test + lint must pass
+    """
+    output {
+      files_changed: string
+      build_pass: bool
+      test_pass: bool
+      new_tests: number
+    }
+  }
+
+  /// Phase 3: Source Inheritance + Enrichment + CLI
+  step source_inherit {
+    engine: claude(sonnet-4-6)
+    prompt: """
+      You are implementing source-inherited ACL and CLI tools for hive-memory at ${project_dir}.
+
+      Read tasks: cat ${project_dir}/openspec/changes/access-control-layer/tasks.md
+      Read ACL types: cat ${project_dir}/src/acl/types.ts
+      Read connectors: ls ${project_dir}/src/connectors/
+      Read slack connector: cat ${project_dir}/src/connectors/slack.ts | head -50
+      Read enrichment: cat ${project_dir}/src/enrichment/engine.ts | head -30
+      Read cli: cat ${project_dir}/src/cli.ts | head -30
+
+      Implement tasks TASK-ACL-10 through TASK-ACL-18:
+
+      Key implementations:
+      1. src/acl/source-inherit.ts — derive ACL from data source
+      2. Slack connector ACL integration (DM→dm visibility, private→private)
+      3. Enrichment ACL inheritance (most-restrictive merge)
+      4. Label CLI commands (create, list, assign, revoke)
+      5. Entity reassign CLI
+      6. Orphaned data cleanup (90-day)
+      7. End-to-end label tests
+      8. Documentation + feature flag
+
+      After: build + test + lint must pass. ALL existing tests must still pass.
+    """
+    output {
+      files_changed: string
+      build_pass: bool
+      test_pass: bool
+      total_tests: number
+    }
+  }
+
+  /// Final: Code Review
+  step review {
+    engine: claude(opus-4-6)
+    prompt: """
+      Review the ACL implementation at ${project_dir}.
+
+      Check:
+      1. git diff --stat to see all changes
+      2. No ACL bypass paths — grep for db.searchEntities, db.listEntities, db.getEntity calls without acl parameter
+      3. DM privacy — admin cannot read DMs
+      4. OR logic — required_labels OR acl_members
+      5. Schema migration backward compatible
+      6. All tests pass: npm test
+      7. No type errors: npm run build
+
+      Verdict: APPROVE or REVISE with specific issues.
+    """
+    output {
+      verdict: string
+      issues: string
+    }
+  }
+}

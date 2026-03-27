@@ -118,9 +118,12 @@ async function main() {
       version: pkg.version as string,
     });
 
-    // Mutable context updated per-request before tool handlers are invoked.
-    const userContext = { userId: undefined as string | undefined, userName: undefined as string | undefined };
-    registerTools(server, store, userContext);
+    // Per-request frozen context. Stored in a closure variable updated atomically before
+    // handleRequest is called. Each request in Node.js runs in the same microtask queue,
+    // so the getter is safe: it always returns the context set by the current request's
+    // synchronous auth middleware before the async handshake begins.
+    let currentUserContext: Readonly<{ userId?: string; userName?: string }> = Object.freeze({});
+    registerTools(server, store, () => currentUserContext);
 
     const slackBotEnabled = process.env["SLACK_BOT_ENABLED"] === "true";
     const slackSigningSecret = process.env["SLACK_SIGNING_SECRET"] ?? "";
@@ -184,9 +187,8 @@ async function main() {
         res.end("Unauthorized");
         return;
       }
-      // Update shared context for this request's tool handlers.
-      userContext.userId = userId;
-      userContext.userName = userName;
+      // Create a new frozen context for this request before handing off to MCP transport.
+      currentUserContext = Object.freeze({ userId, userName });
 
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       res.on("close", () => { transport.close(); });

@@ -1,9 +1,9 @@
 import { z } from "zod";
 import type { HiveDatabase } from "../db/database.js";
 import { createUser, listUsers, revokeUser } from "../auth.js";
-import type { SafeToolFn } from "./index.js";
+import type { SafeToolFn, GetUserContext } from "./index.js";
 
-export function registerUserTools(safeTool: SafeToolFn, db: HiveDatabase) {
+export function registerUserTools(safeTool: SafeToolFn, db: HiveDatabase, getUserContext?: GetUserContext) {
   safeTool(
     "user_manage",
     "Manage hive-memory users. Admin-only tool — requires CORTEX_AUTH_TOKEN. Actions: add (create user + return API key), list (all users), revoke (deactivate user).",
@@ -14,6 +14,16 @@ export function registerUserTools(safeTool: SafeToolFn, db: HiveDatabase) {
       user_id: z.string().optional().describe("User ID to revoke (required for 'revoke')"),
     },
     async (args) => {
+      // Check admin authorization: system token (no userId) or user with admin role.
+      const userContext = getUserContext?.();
+      const isSystemToken = userContext === undefined || userContext.userId === undefined;
+      if (!isSystemToken) {
+        const userRecord = db.getUserById(userContext.userId!);
+        if (userRecord?.role !== "admin") {
+          return { content: [{ type: "text" as const, text: "Error: user_manage requires admin role" }], isError: true };
+        }
+      }
+
       const action = args.action as string;
 
       switch (action) {

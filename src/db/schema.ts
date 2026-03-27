@@ -1,6 +1,6 @@
 import type { Database } from "better-sqlite3";
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export function createSchema(db: Database): void {
   db.exec(`
@@ -28,7 +28,10 @@ export function createSchema(db: Database): void {
       expires_at        TEXT,
       status            TEXT NOT NULL DEFAULT 'active',
       superseded_by     TEXT,
-      content_hash      TEXT
+      content_hash      TEXT,
+      owner_id          TEXT REFERENCES users(id),
+      required_labels   TEXT NOT NULL DEFAULT '[]',
+      acl_members       TEXT NOT NULL DEFAULT '[]'
     );
 
     -- ── FTS5 virtual table for full-text search ────────────────────────────────
@@ -171,6 +174,29 @@ export function createSchema(db: Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_users_api_key_hash ON users(api_key_hash);
     CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
+
+    -- ── labels (v5) ──────────────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS labels (
+      id          TEXT PRIMARY KEY,
+      name        TEXT NOT NULL UNIQUE,
+      description TEXT,
+      created_at  TEXT NOT NULL
+    );
+
+    -- ── user_labels (v5) ─────────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS user_labels (
+      user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      label_id    TEXT NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+      role        TEXT NOT NULL DEFAULT 'member',
+      granted_by  TEXT,
+      granted_at  TEXT NOT NULL,
+      PRIMARY KEY (user_id, label_id)
+    );
+
+    -- ── ACL indexes (v5) ──────────────────────────────────────────────────────
+    CREATE INDEX IF NOT EXISTS idx_user_labels_user    ON user_labels(user_id);
+    CREATE INDEX IF NOT EXISTS idx_entities_owner      ON entities(owner_id);
+    CREATE INDEX IF NOT EXISTS idx_entities_visibility ON entities(visibility);
   `);
 
   // v3 migration: add content_hash column to existing databases
@@ -190,5 +216,43 @@ export function createSchema(db: Database): void {
     db.exec(`ALTER TABLE connectors ADD COLUMN sync_history TEXT NOT NULL DEFAULT '[]'`);
   } catch {
     // Column already exists (fresh DB or already migrated) — safe to ignore
+  }
+
+  // v5 migration: add ACL columns to entities
+  try {
+    db.exec(`ALTER TABLE entities ADD COLUMN owner_id TEXT REFERENCES users(id)`);
+  } catch {
+    // Column already exists — safe to ignore
+  }
+  try {
+    db.exec(`ALTER TABLE entities ADD COLUMN required_labels TEXT NOT NULL DEFAULT '[]'`);
+  } catch {
+    // Column already exists — safe to ignore
+  }
+  try {
+    db.exec(`ALTER TABLE entities ADD COLUMN acl_members TEXT NOT NULL DEFAULT '[]'`);
+  } catch {
+    // Column already exists — safe to ignore
+  }
+
+  // v5 migration: add revoked_at column to users
+  try {
+    db.exec(`ALTER TABLE users ADD COLUMN revoked_at TEXT`);
+  } catch {
+    // Column already exists — safe to ignore
+  }
+
+  // v5 migration: partial index for label-free entities
+  try {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_entities_no_labels ON entities(id) WHERE required_labels = '[]'`);
+  } catch {
+    // Index already exists — safe to ignore
+  }
+
+  // v5 migration: rename 'personal' visibility to 'private'
+  try {
+    db.exec(`UPDATE entities SET visibility = 'private' WHERE visibility = 'personal'`);
+  } catch {
+    // Safe to ignore
   }
 }

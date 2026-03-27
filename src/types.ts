@@ -258,7 +258,7 @@ export type DomainType =
 /** Phase 1: always 'local'. Phase 2: 'local'|'team:{id}'. Phase 3: + 'org:{id}' */
 export type NamespaceType = "local" | `team:${string}` | `org:${string}`;
 
-export type VisibilityType = "personal" | "team";
+export type VisibilityType = "personal" | "private" | "dm" | "team" | "org" | "public";
 
 export type ConfidenceType = "confirmed" | "inferred";
 
@@ -296,6 +296,24 @@ export interface Entity {
   status: EntityStatus;
   supersededBy?: string;
   contentHash?: string;
+  ownerId?: string;
+  requiredLabels?: string[];
+  aclMembers?: string[];
+}
+
+export interface Label {
+  id: string;
+  name: string;
+  description?: string;
+  createdAt: string;
+}
+
+export interface UserLabel {
+  userId: string;
+  labelId: string;
+  role: string;
+  grantedBy?: string;
+  grantedAt: string;
 }
 
 export interface ConnectorConfig {

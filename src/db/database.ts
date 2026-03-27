@@ -35,6 +35,9 @@ interface EntityRow {
   status: string;
   superseded_by: string | null;
   content_hash: string | null;
+  owner_id: string | null;
+  required_labels: string;
+  acl_members: string;
 }
 
 interface SynapseRow {
@@ -204,6 +207,19 @@ export interface CountEntitiesOptions {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * Sanitize a user-supplied FTS5 search query to prevent injection attacks.
+ * Strips boolean operators, special characters, and column prefix syntax.
+ */
+function sanitizeFTS5Query(input: string): string {
+  return input
+    .replace(/\b(OR|AND|NOT|NEAR)\b/gi, "")  // Strip FTS5 boolean operators
+    .replace(/[*"(){}[\]^~]/g, "")             // Strip special chars
+    .replace(/\b\w+:/g, "")                     // Strip column: prefixes
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function rowToEntity(row: EntityRow): Entity {
   return {
     id: row.id,
@@ -231,6 +247,9 @@ function rowToEntity(row: EntityRow): Entity {
     status: row.status as Entity["status"],
     supersededBy: row.superseded_by ?? undefined,
     contentHash: row.content_hash ?? undefined,
+    ownerId: row.owner_id ?? undefined,
+    requiredLabels: JSON.parse(row.required_labels ?? '[]') as string[],
+    aclMembers: JSON.parse(row.acl_members ?? '[]') as string[],
   };
 }
 
@@ -259,6 +278,9 @@ function entityToRow(entity: Entity): Record<string, unknown> {
     status: entity.status,
     superseded_by: entity.supersededBy ?? null,
     content_hash: entity.contentHash ?? null,
+    owner_id: entity.ownerId ?? null,
+    required_labels: JSON.stringify(entity.requiredLabels ?? []),
+    acl_members: JSON.stringify(entity.aclMembers ?? []),
   };
 }
 
@@ -379,13 +401,15 @@ export class HiveDatabase {
         tags, keywords, attributes,
         source_system, source_external_id, source_url, source_connector,
         author, visibility, domain, confidence,
-        created_at, updated_at, expires_at, status, superseded_by, content_hash
+        created_at, updated_at, expires_at, status, superseded_by, content_hash,
+        owner_id, required_labels, acl_members
       ) VALUES (
         @id, @entity_type, @project, @namespace, @title, @content,
         @tags, @keywords, @attributes,
         @source_system, @source_external_id, @source_url, @source_connector,
         @author, @visibility, @domain, @confidence,
-        @created_at, @updated_at, @expires_at, @status, @superseded_by, @content_hash
+        @created_at, @updated_at, @expires_at, @status, @superseded_by, @content_hash,
+        @owner_id, @required_labels, @acl_members
       )
     `).run(row);
   }
@@ -425,7 +449,10 @@ export class HiveDatabase {
         expires_at = @expires_at,
         status = @status,
         superseded_by = @superseded_by,
-        content_hash = @content_hash
+        content_hash = @content_hash,
+        owner_id = @owner_id,
+        required_labels = @required_labels,
+        acl_members = @acl_members
       WHERE id = @id
     `).run(row);
 
@@ -536,8 +563,12 @@ export class HiveDatabase {
   searchEntities(query: string, options: SearchEntitiesOptions = {}): Entity[] {
     const { project, entityType, domain, namespace, limit = 20 } = options;
 
+    const sanitizedQuery = sanitizeFTS5Query(query);
+    // If sanitization strips everything, return empty results rather than running a broken query.
+    if (!sanitizedQuery) return [];
+
     const extraConditions: string[] = [];
-    const params: Record<string, unknown> = { query, limit };
+    const params: Record<string, unknown> = { query: sanitizedQuery, limit };
 
     if (project !== undefined) {
       extraConditions.push("e.project = @project");
@@ -1203,6 +1234,21 @@ export class HiveDatabase {
       created_at: user.createdAt,
       status: user.status,
     });
+  }
+
+  getUserById(id: string): { id: string; name: string; email?: string; role: string; createdAt: string; status: string } | null {
+    const row = this.db
+      .prepare("SELECT * FROM users WHERE id = ?")
+      .get(id) as { id: string; name: string; email: string | null; api_key_hash: string; role: string; created_at: string; status: string } | undefined;
+    if (!row) return null;
+    return {
+      id: row.id,
+      name: row.name,
+      email: row.email ?? undefined,
+      role: row.role,
+      createdAt: row.created_at,
+      status: row.status,
+    };
   }
 
   getUserByApiKeyHash(hash: string): { id: string; name: string; email?: string; role: string; createdAt: string; status: string } | null {

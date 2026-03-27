@@ -22,11 +22,14 @@ export type SafeToolFn = (
   handler: ToolHandler,
 ) => void;
 
-/** Mutable per-request user context set by HTTP auth middleware. */
+/** Immutable per-request user context. Created fresh for each HTTP request. */
 export interface UserContext {
-  userId?: string;
-  userName?: string;
+  readonly userId?: string;
+  readonly userName?: string;
 }
+
+/** Getter function that returns the current request's frozen UserContext. */
+export type GetUserContext = () => Readonly<UserContext>;
 
 function wrapHandler(handler: ToolHandler): ToolHandler {
   return async (args) => {
@@ -55,7 +58,7 @@ export function registerTools(
     ) => void;
   },
   store: CortexStore,
-  userContext?: UserContext,
+  getUserContext?: GetUserContext,
 ) {
   const safeTool: SafeToolFn = (name, description, schema, handler) =>
     server.tool(name, description, schema, wrapHandler(handler));
@@ -64,8 +67,8 @@ export function registerTools(
 
   // v2 tools (existing — backward compatible)
   registerProjectTools(safeTool, store);
-  registerMemoryTools(safeTool, store, userContext);
-  registerSessionTools(safeTool, store, userContext);
+  registerMemoryTools(safeTool, store, getUserContext);
+  registerSessionTools(safeTool, store, getUserContext);
 
   // v3 new tools
   registerBrowseTools(safeTool, db);
@@ -76,5 +79,5 @@ export function registerTools(
   registerMeetingTools(safeTool, store);
   registerStewardTools(safeTool, store);
   registerAdvisorTools(safeTool, db);
-  registerUserTools(safeTool, db);
+  registerUserTools(safeTool, db, getUserContext);
 }
