@@ -27,7 +27,11 @@ export function registerOrgTools(safeTool: SafeToolFn, db: HiveDatabase, userCon
         if (caller && caller.role !== "admin") {
           return { content: [{ type: "text" as const, text: "Error: org_manage requires admin role" }], isError: true };
         }
+      } else if (process.env.CORTEX_ACL === "on") {
+        // When ACL is enabled, unauthenticated access is blocked
+        return { content: [{ type: "text" as const, text: "Error: authentication required when CORTEX_ACL is enabled" }], isError: true };
       }
+      // When CORTEX_ACL is off and no userId: allow (single-user/dev mode)
 
       const action = args.action as string;
 

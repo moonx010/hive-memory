@@ -16,9 +16,12 @@ export interface GraphRAGResult {
  * Build community summaries for global/thematic queries.
  * Uses rule-based summarization (no LLM required).
  */
-export function buildGraphRAGSummaries(db: HiveDatabase): GraphRAGResult {
-  // 1. Load all active entities with keywords
-  const entities = db.listEntities({ limit: 1000 }).map((e) => ({
+export function buildGraphRAGSummaries(
+  db: HiveDatabase,
+  options?: { orgId?: string; project?: string },
+): GraphRAGResult {
+  // 1. Load active entities (tenant-scoped if orgId provided)
+  const entities = db.listEntities({ limit: 1000, ...options }).map((e) => ({
     id: e.id,
     title: e.title ?? e.content.slice(0, 80),
     content: e.content,

@@ -1397,6 +1397,13 @@ export class HiveDatabase {
   // ── Organization methods ─────────────────────────────────────────────────────
 
   createOrganization(name: string, slug: string): Organization {
+    if (!slug || !/^[a-z0-9-]+$/.test(slug)) {
+      throw new Error(`Invalid slug "${slug}": must be lowercase alphanumeric with hyphens only`);
+    }
+    const existing = this.getOrganizationBySlug(slug);
+    if (existing) {
+      throw new Error(`Organization with slug "${slug}" already exists`);
+    }
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     this.db.prepare(`
