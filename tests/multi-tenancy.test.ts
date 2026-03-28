@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -80,7 +81,7 @@ describe("multi-tenancy", () => {
   describe("tenant isolation — entity scoping by org_id", () => {
     function insertEntity(orgId: string | undefined, content: string): string {
       const now = new Date().toISOString();
-      const id = crypto.randomUUID();
+      const id = randomUUID();
       db.insertEntity({
         id,
         entityType: "memory",
