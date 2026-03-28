@@ -10,6 +10,7 @@ export interface StewardReport {
   staleEntities: number;
   orphanedEntities: number;
   unconfirmedInferred: number;
+  unresolvedConflicts: number;
   markdownOutput: string;
 }
 
@@ -89,6 +90,14 @@ export class MemorySteward {
       (e) => e.confidence === "inferred",
     );
 
+    // 5. Count unresolved conflicts (conflict synapses between two active entities)
+    const conflictSynapses = this.db.getSynapsesByAxon("conflict");
+    const unresolvedConflicts = conflictSynapses.filter((c) => {
+      const source = this.db.getEntity(c.source);
+      const target = this.db.getEntity(c.target);
+      return source?.status === "active" && target?.status === "active";
+    });
+
     // Render markdown
     const lines: string[] = [
       "# Memory Steward Audit Report",
@@ -103,6 +112,7 @@ export class MemorySteward {
       `| Stale entities (>90 days) | ${staleEntities} |`,
       `| Orphaned entities (no synapses) | ${orphanedEntities} |`,
       `| Unconfirmed inferred entities | ${inferred.length} |`,
+      `| Unresolved conflicts | ${unresolvedConflicts.length} |`,
       "",
     ];
 
@@ -116,11 +126,20 @@ export class MemorySteward {
       lines.push("");
     }
 
+    if (unresolvedConflicts.length > 0) {
+      lines.push("## Unresolved Conflicts", "");
+      for (const c of unresolvedConflicts.slice(0, 20)) {
+        lines.push(`- ${c.source} ↔ ${c.target} (weight: ${c.weight.toFixed(2)})`);
+      }
+      lines.push("");
+    }
+
     return {
       duplicateCandidates,
       staleEntities,
       orphanedEntities,
       unconfirmedInferred: inferred.length,
+      unresolvedConflicts: unresolvedConflicts.length,
       markdownOutput: lines.join("\n"),
     };
   }

@@ -1,6 +1,6 @@
 import type { Database } from "better-sqlite3";
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 export function createSchema(db: Database): void {
   // ── Schema version tracking ───────────────────────────────────────────────
@@ -41,7 +41,9 @@ export function createSchema(db: Database): void {
       content_hash      TEXT,
       owner_id          TEXT,
       required_labels   TEXT NOT NULL DEFAULT '[]',
-      acl_members       TEXT NOT NULL DEFAULT '[]'
+      acl_members       TEXT NOT NULL DEFAULT '[]',
+      valid_from        TEXT,
+      valid_to          TEXT
     );
 
     -- ── FTS5 virtual table for full-text search ────────────────────────────────
@@ -246,6 +248,16 @@ export function createSchema(db: Database): void {
 
   // v5: revoked_at on users
   try { db.exec(`ALTER TABLE users ADD COLUMN revoked_at TEXT`); } catch { /* exists */ }
+
+  // v6: temporal validity columns
+  try { db.exec(`ALTER TABLE entities ADD COLUMN valid_from TEXT`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE entities ADD COLUMN valid_to TEXT`); } catch { /* exists */ }
+  // Backfill: set valid_from = created_at for existing entities that lack it
+  try { db.exec(`UPDATE entities SET valid_from = created_at WHERE valid_from IS NULL`); } catch { /* no rows */ }
+
+  // v6: index for temporal validity queries
+  try { db.exec(`CREATE INDEX IF NOT EXISTS idx_entities_valid_from ON entities(valid_from)`); } catch { /* exists */ }
+  try { db.exec(`CREATE INDEX IF NOT EXISTS idx_entities_valid_to ON entities(valid_to)`); } catch { /* exists */ }
 
   // Update schema_meta version to current
   db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('version', ?)").run(String(SCHEMA_VERSION));

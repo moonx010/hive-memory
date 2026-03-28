@@ -24,6 +24,8 @@ export interface HiveSearchResult {
   entryId?: string;
   /** Graph depth (if found via spreading activation) */
   graphDepth?: number;
+  /** Retrieval mode used to find this result */
+  retrieval_mode?: "simple" | "agentic";
 }
 
 export interface HiveSearchOptions {

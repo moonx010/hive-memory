@@ -39,6 +39,8 @@ interface EntityRow {
   status: string;
   superseded_by: string | null;
   content_hash: string | null;
+  valid_from: string | null;
+  valid_to: string | null;
 }
 
 interface SynapseRow {
@@ -190,6 +192,8 @@ export interface ListEntitiesOptions {
   hasKeywords?: boolean;
   /** ACL context — when provided, results are filtered per policy. */
   acl?: ACLContext;
+  /** When true, include entities with a non-null valid_to (temporally superseded). Default: false */
+  includeSuperseded?: boolean;
 }
 
 export interface SearchEntitiesOptions {
@@ -200,6 +204,8 @@ export interface SearchEntitiesOptions {
   limit?: number;
   /** ACL context — when provided, results are filtered per policy. */
   acl?: ACLContext;
+  /** When true, include entities with a non-null valid_to (temporally superseded). Default: false */
+  includeSuperseded?: boolean;
 }
 
 export interface CountEntitiesOptions {
@@ -239,6 +245,8 @@ function rowToEntity(row: EntityRow): Entity {
     status: row.status as Entity["status"],
     supersededBy: row.superseded_by ?? undefined,
     contentHash: row.content_hash ?? undefined,
+    validFrom: row.valid_from ?? undefined,
+    validTo: row.valid_to ?? undefined,
   };
 }
 
@@ -267,6 +275,8 @@ function entityToRow(entity: Entity): Record<string, unknown> {
     status: entity.status,
     superseded_by: entity.supersededBy ?? null,
     content_hash: entity.contentHash ?? null,
+    valid_from: entity.validFrom ?? null,
+    valid_to: entity.validTo ?? null,
   };
 }
 
@@ -400,6 +410,10 @@ export class HiveDatabase {
     if (!entity.contentHash) {
       entity.contentHash = computeContentHash(entity.content);
     }
+    // Default valid_from to createdAt if not provided
+    if (!entity.validFrom) {
+      entity.validFrom = entity.createdAt;
+    }
     const row = entityToRow(entity);
     this.db.prepare(`
       INSERT INTO entities (
@@ -407,13 +421,15 @@ export class HiveDatabase {
         tags, keywords, attributes,
         source_system, source_external_id, source_url, source_connector,
         author, visibility, domain, confidence,
-        created_at, updated_at, expires_at, status, superseded_by, content_hash
+        created_at, updated_at, expires_at, status, superseded_by, content_hash,
+        valid_from, valid_to
       ) VALUES (
         @id, @entity_type, @project, @namespace, @title, @content,
         @tags, @keywords, @attributes,
         @source_system, @source_external_id, @source_url, @source_connector,
         @author, @visibility, @domain, @confidence,
-        @created_at, @updated_at, @expires_at, @status, @superseded_by, @content_hash
+        @created_at, @updated_at, @expires_at, @status, @superseded_by, @content_hash,
+        @valid_from, @valid_to
       )
     `).run(row);
   }
@@ -453,7 +469,9 @@ export class HiveDatabase {
         expires_at = @expires_at,
         status = @status,
         superseded_by = @superseded_by,
-        content_hash = @content_hash
+        content_hash = @content_hash,
+        valid_from = @valid_from,
+        valid_to = @valid_to
       WHERE id = @id
     `).run(row);
 
@@ -497,6 +515,7 @@ export class HiveDatabase {
       unenrichedOnly = false,
       hasKeywords = false,
       acl,
+      includeSuperseded = false,
     } = options;
 
     const conditions: string[] = [];
@@ -544,6 +563,9 @@ export class HiveDatabase {
     if (hasKeywords) {
       conditions.push("e.keywords != '[]'");
     }
+    if (!includeSuperseded) {
+      conditions.push("e.valid_to IS NULL");
+    }
     if (acl) {
       const { clause, params: aclParams } = defaultACLPolicy.sqlWhereClause(acl);
       conditions.push(clause);
@@ -578,7 +600,7 @@ export class HiveDatabase {
   }
 
   searchEntities(query: string, options: SearchEntitiesOptions = {}): Entity[] {
-    const { project, entityType, domain, namespace, limit = 20, acl } = options;
+    const { project, entityType, domain, namespace, limit = 20, acl, includeSuperseded = false } = options;
 
     const extraConditions: string[] = [];
     const params: Record<string, unknown> = { query, limit };
@@ -598,6 +620,9 @@ export class HiveDatabase {
     if (namespace !== undefined) {
       extraConditions.push("e.namespace = @namespace");
       params.namespace = namespace;
+    }
+    if (!includeSuperseded) {
+      extraConditions.push("e.valid_to IS NULL");
     }
 
     if (acl) {
@@ -984,6 +1009,29 @@ export class HiveDatabase {
     if (!existing) throw new Error(`Entity not found: ${id}`);
     const merged = [...new Set([...existing.keywords, ...keywords])];
     this.updateEntity(id, { keywords: merged, updatedAt: new Date().toISOString() });
+  }
+
+  /** Get all synapses for a given axon type. */
+  getSynapsesByAxon(axon: string): SynapseRecord[] {
+    const rows = this.db
+      .prepare("SELECT * FROM synapses WHERE axon = ?")
+      .all(axon) as SynapseRow[];
+    return rows.map(rowToSynapse);
+  }
+
+  /**
+   * Mark an entity as superseded by a newer entity.
+   * Sets valid_to + superseded_by + status='superseded' on old entity,
+   * then creates a refinement synapse from new → old.
+   */
+  supersede(oldId: string, newId: string): void {
+    const now = new Date().toISOString();
+    this.updateEntity(oldId, {
+      validTo: now,
+      supersededBy: newId,
+      status: "superseded" as Entity["status"],
+    });
+    this.upsertSynapse({ sourceId: newId, targetId: oldId, axon: "refinement", weight: 1.0 });
   }
 
   /** Upsert a synapse with set-weight semantics (not +0.1 accumulation). */

@@ -164,6 +164,9 @@ export async function handleCli(
     case "backup":
       await handleBackup(store, initStore, parsed);
       break;
+    case "supersede":
+      await handleSupersede(store, initStore, args.slice(1));
+      break;
     default:
       printUsage();
       process.exit(1);
@@ -675,6 +678,42 @@ async function handleBackup(
   console.log(`Database backed up to: ${outputPath}`);
 }
 
+async function handleSupersede(
+  store: CortexStore,
+  initStore: () => Promise<void>,
+  args: string[],
+): Promise<void> {
+  // Usage: hive-memory supersede <old-id> <new-id>
+  // args[0] = old-id, args[1] = new-id (caller passes args.slice(1))
+  const oldId = args[0];
+  const newId = args[1];
+
+  if (!oldId || !newId) {
+    console.error("Usage: hive-memory supersede <old-id> <new-id>");
+    process.exit(1);
+  }
+
+  await initStore();
+  const db = store.database;
+
+  const oldEntity = db.getEntity(oldId);
+  if (!oldEntity) {
+    console.error(`Entity not found: ${oldId}`);
+    process.exit(1);
+  }
+
+  const newEntity = db.getEntity(newId);
+  if (!newEntity) {
+    console.error(`Entity not found: ${newId}`);
+    process.exit(1);
+  }
+
+  db.supersede(oldId, newId);
+  console.log(`Superseded: ${oldId} → ${newId}`);
+  console.log(`Old entity marked with valid_to and status=superseded.`);
+  console.log(`Refinement synapse created: ${newId} → ${oldId}`);
+}
+
 function printUsage(): void {
   console.log(`Usage: hive-memory <command> [options]
 
@@ -696,6 +735,7 @@ Commands:
   import-slack <dir>   Import Slack Enterprise Grid export
   lifecycle [run|stats]   Data lifecycle management (archive old entities)
   backup    Backup SQLite database (--output <path>, default: cortex-backup.db)
+  supersede <old-id> <new-id>   Mark entity as superseded by newer entity
 
   hook session-end    Auto-save session (Claude Code hook)
 

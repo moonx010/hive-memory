@@ -30,6 +30,8 @@ import { HiveDatabase } from "./db/database.js";
 import type { ListEntitiesOptions, SearchEntitiesOptions } from "./db/database.js";
 import type { Entity } from "./types.js";
 import { createEmbedder } from "./search/embedder.js";
+import { rewriteQuery } from "./search/query-rewriter.js";
+import { agenticRetrieve } from "./search/agentic-retrieval.js";
 import type { ConnectorRegistry, RawDocument } from "./connectors/types.js";
 import { createConnectorRegistry } from "./connectors/types.js";
 import { ConnectorStateMachine } from "./connectors/state-machine.js";
@@ -333,10 +335,11 @@ export class CortexStore {
    * Recall memories using FTS5 + spreading activation (v3 DB) or keyword search (v2 hive fallback).
    *
    * v3 flow (when _db is initialized):
-   *   1. FTS5 search → initial results
-   *   2. Top-3 seeds → spreading activation on synapse table
-   *   3. RRF fusion of FTS5 + graph results
-   *   4. Convert Entity[] → HiveSearchResult[] for backward compat
+   *   1. Query rewriting (rule-based or LLM) for better retrieval
+   *   2. FTS5 search → initial results (simple) or agentic multi-step (complex)
+   *   3. Top-3 seeds → spreading activation on synapse table
+   *   4. RRF fusion of FTS5 + graph results
+   *   5. Convert Entity[] → HiveSearchResult[] for backward compat
    *
    * v2 fallback: uses hive keyword search (HiveSearch).
    */
@@ -345,18 +348,42 @@ export class CortexStore {
     // The `database` getter lazily creates a HiveDatabase for browse/tool use, but that
     // empty SQLite DB shouldn't override the populated v2 hive for recall.
     if (this._dbExplicit && this._db) {
+      // Step 0: Rewrite the query for better retrieval
+      let effectiveQuery = query;
+      let useAgentic = false;
+      try {
+        const rewritten = await rewriteQuery(query);
+        effectiveQuery = rewritten.rewritten;
+        // Use agentic retrieval for complex/exploratory queries
+        const isLongQuery = query.split(" ").length >= 8;
+        useAgentic = rewritten.intent === "exploratory" || isLongQuery;
+      } catch {
+        // Query rewriting failure — continue with original query
+      }
+
+      if (useAgentic) {
+        const agenticResult = await agenticRetrieve(effectiveQuery, this._db, { maxSteps: 3 });
+        // Convert Entity[] → HiveSearchResult[], agent filter, limit
+        const entities = agentId
+          ? agenticResult.finalResults.filter((e) => e.attributes?.agentId === agentId)
+          : agenticResult.finalResults;
+        return entities
+          .slice(0, limit)
+          .map((e, i) => ({ ...entityToSearchResult(e, 1 / (1 + i)), retrieval_mode: "agentic" as const }));
+      }
+
       // Attempt to get query embedding for hybrid search (graceful degradation)
       let embedding: Float32Array | undefined;
       try {
         const embedder = await createEmbedder();
         if (embedder.isAvailable) {
-          const vec = await embedder.embed(query);
+          const vec = await embedder.embed(effectiveQuery);
           if (vec) embedding = vec;
         }
       } catch {
         // Embedding unavailable — fall through to BM25-only
       }
-      return this._recallViaDb(query, projectId, limit, agentId, embedding);
+      return this._recallViaDb(effectiveQuery, projectId, limit, agentId, embedding);
     }
     return this.memories.recallMemories(query, projectId, limit, agentId);
   }
