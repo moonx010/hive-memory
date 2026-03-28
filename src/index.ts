@@ -103,7 +103,7 @@ async function handleHook(args: string[]): Promise<void> {
 
 // --- CLI commands ---
 
-const CLI_COMMANDS = new Set(["store", "recall", "status", "inject", "sync", "cleanup", "stats", "team", "enrich", "meeting", "transcribe", "audit", "briefing", "analyze", "patterns", "connect", "user", "org", "backup", "import-slack", "lifecycle"]);
+const CLI_COMMANDS = new Set(["store", "recall", "status", "inject", "sync", "cleanup", "stats", "team", "enrich", "meeting", "transcribe", "audit", "audit-log", "briefing", "analyze", "patterns", "connect", "user", "org", "backup", "import-slack", "lifecycle"]);
 
 // --- Main ---
 
@@ -149,10 +149,26 @@ async function main() {
         return;
       }
 
-      // ── Metrics endpoint ──────────────────────────────────────────────────────
+      // ── Metrics endpoint (auth required) ─────────────────────────────────────
       if (req.url === "/metrics" && req.method === "GET") {
+        if (authToken) {
+          const provided = req.headers.authorization?.replace("Bearer ", "");
+          if (provided !== authToken) {
+            res.writeHead(401);
+            res.end("Unauthorized");
+            return;
+          }
+        }
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(getMetrics()));
+        return;
+      }
+
+      // ── Gateway status endpoint ───────────────────────────────────────────────
+      if (req.url === "/gateway/status" && req.method === "GET") {
+        const { loadGatewayConfig } = await import("./gateway/mcp-gateway.js");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(loadGatewayConfig()));
         return;
       }
 
@@ -262,6 +278,8 @@ async function main() {
     httpServer.listen(port, () => {
       console.error(`[cortex] HTTP MCP server listening on port ${port}`);
     });
+
+    setupGracefulShutdown(httpServer, store);
 
     // ── Auto-sync scheduler ───────────────────────────────────────────
     const syncIntervalMs = parseInt(process.env["CORTEX_SYNC_INTERVAL_MIN"] ?? "30", 10) * 60 * 1000;
@@ -598,3 +616,20 @@ main().catch((err) => {
   console.error("Cortex failed to start:", err);
   process.exit(1);
 });
+
+// ── Graceful shutdown ────────────────────────────────────────────────────
+function setupGracefulShutdown(httpServer: import("node:http").Server, store: CortexStore) {
+  const shutdown = (signal: string) => {
+    console.error(`[cortex] ${signal} received, shutting down gracefully...`);
+    httpServer.close(() => {
+      console.error("[cortex] HTTP server closed");
+      try { store.database.close(); } catch { /* already closed */ }
+      console.error("[cortex] Database closed");
+      process.exit(0);
+    });
+    // Force exit after 10s if graceful shutdown hangs
+    setTimeout(() => { console.error("[cortex] Forced exit"); process.exit(1); }, 10000);
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+}

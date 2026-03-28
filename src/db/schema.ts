@@ -1,6 +1,6 @@
 import type { Database } from "better-sqlite3";
 
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 export function createSchema(db: Database): void {
   // ── Schema version tracking ───────────────────────────────────────────────
@@ -208,6 +208,34 @@ export function createSchema(db: Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_workspaces_org ON workspaces(org_id);
+
+    -- ── audit_log (v8) ────────────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp TEXT NOT NULL,
+      user_id TEXT,
+      action TEXT NOT NULL,
+      tool_name TEXT,
+      resource_id TEXT,
+      query TEXT,
+      result_count INTEGER,
+      ip_address TEXT,
+      metadata TEXT DEFAULT '{}'
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id);
+
+    -- Tamper protection: prevent DELETE/UPDATE on audit_log
+    CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
+      BEFORE DELETE ON audit_log BEGIN
+        SELECT RAISE(ABORT, 'Audit log entries cannot be deleted');
+      END;
+
+    CREATE TRIGGER IF NOT EXISTS audit_log_no_update
+      BEFORE UPDATE ON audit_log BEGIN
+        SELECT RAISE(ABORT, 'Audit log entries cannot be modified');
+      END;
   `);
 
   // Run column migrations only when upgrading from an older schema version

@@ -9,6 +9,7 @@ import { VectorStore } from "../search/vector-store.js";
 import { rrfFusion, buildEmbedText } from "../search/hybrid.js";
 import type { ACLContext } from "../acl/types.js";
 import { defaultACLPolicy } from "../acl/policy.js";
+import { getCDCEventBus } from "../pipeline/cdc.js";
 
 // Re-export Entity so consumers can import it from this module
 export type { Entity } from "../types.js";
@@ -456,6 +457,13 @@ export class HiveDatabase {
         @valid_from, @valid_to, @org_id
       )
     `).run(row);
+    getCDCEventBus().emit({
+      type: "insert",
+      entityId: entity.id,
+      entityType: entity.entityType,
+      source: entity.source?.system ?? "unknown",
+      timestamp: new Date().toISOString(),
+    }).catch(() => { /* non-critical */ });
   }
 
   updateEntity(id: string, updates: Partial<Omit<Entity, "id">>): { changed: boolean } {
@@ -498,12 +506,26 @@ export class HiveDatabase {
         valid_to = @valid_to
       WHERE id = @id
     `).run(row);
+    getCDCEventBus().emit({
+      type: "update",
+      entityId: id,
+      entityType: merged.entityType,
+      source: merged.source?.system ?? "unknown",
+      timestamp: new Date().toISOString(),
+    }).catch(() => { /* non-critical */ });
 
     return { changed };
   }
 
   deleteEntity(id: string): void {
     this.db.prepare("DELETE FROM entities WHERE id = ?").run(id);
+    getCDCEventBus().emit({
+      type: "delete",
+      entityId: id,
+      entityType: "unknown",
+      source: "unknown",
+      timestamp: new Date().toISOString(),
+    }).catch(() => { /* non-critical */ });
   }
 
   getEntity(id: string, acl?: ACLContext): Entity | null {
@@ -1461,6 +1483,106 @@ export class HiveDatabase {
       .prepare("SELECT * FROM workspaces WHERE org_id = ? ORDER BY created_at ASC")
       .all(orgId) as WorkspaceRow[];
     return rows.map((row) => ({ id: row.id, orgId: row.org_id, name: row.name, slug: row.slug, createdAt: row.created_at, status: row.status }));
+  }
+
+  // ── Audit log methods ─────────────────────────────────────────────────────────
+
+  insertAuditEntry(entry: {
+    timestamp: string;
+    userId?: string;
+    action: string;
+    toolName?: string;
+    resourceId?: string;
+    query?: string;
+    resultCount?: number;
+    ipAddress?: string;
+    metadata?: Record<string, unknown>;
+  }): void {
+    this.db.prepare(`
+      INSERT INTO audit_log (timestamp, user_id, action, tool_name, resource_id, query, result_count, ip_address, metadata)
+      VALUES (@timestamp, @user_id, @action, @tool_name, @resource_id, @query, @result_count, @ip_address, @metadata)
+    `).run({
+      timestamp: entry.timestamp,
+      user_id: entry.userId ?? null,
+      action: entry.action,
+      tool_name: entry.toolName ?? null,
+      resource_id: entry.resourceId ?? null,
+      query: entry.query ?? null,
+      result_count: entry.resultCount ?? null,
+      ip_address: entry.ipAddress ?? null,
+      metadata: JSON.stringify(entry.metadata ?? {}),
+    });
+  }
+
+  queryAuditLog(filters: {
+    userId?: string;
+    since?: string;
+    until?: string;
+    action?: string;
+    limit?: number;
+  } = {}): Array<{
+    id: number;
+    timestamp: string;
+    userId?: string;
+    action: string;
+    toolName?: string;
+    resourceId?: string;
+    query?: string;
+    resultCount?: number;
+    ipAddress?: string;
+    metadata: Record<string, unknown>;
+  }> {
+    const { userId, since, until, action, limit = 100 } = filters;
+    const conditions: string[] = [];
+    const params: Record<string, unknown> = {};
+
+    if (userId !== undefined) {
+      conditions.push("user_id = @userId");
+      params.userId = userId;
+    }
+    if (since !== undefined) {
+      conditions.push("timestamp >= @since");
+      params.since = since;
+    }
+    if (until !== undefined) {
+      conditions.push("timestamp <= @until");
+      params.until = until;
+    }
+    if (action !== undefined) {
+      conditions.push("action = @action");
+      params.action = action;
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    params.limit = limit;
+
+    const rows = this.db
+      .prepare(`SELECT * FROM audit_log ${where} ORDER BY timestamp DESC LIMIT @limit`)
+      .all(params) as Array<{
+        id: number;
+        timestamp: string;
+        user_id: string | null;
+        action: string;
+        tool_name: string | null;
+        resource_id: string | null;
+        query: string | null;
+        result_count: number | null;
+        ip_address: string | null;
+        metadata: string;
+      }>;
+
+    return rows.map((row) => ({
+      id: row.id,
+      timestamp: row.timestamp,
+      userId: row.user_id ?? undefined,
+      action: row.action,
+      toolName: row.tool_name ?? undefined,
+      resourceId: row.resource_id ?? undefined,
+      query: row.query ?? undefined,
+      resultCount: row.result_count ?? undefined,
+      ipAddress: row.ip_address ?? undefined,
+      metadata: JSON.parse(row.metadata) as Record<string, unknown>,
+    }));
   }
 
   // ── Backup ────────────────────────────────────────────────────────────────────

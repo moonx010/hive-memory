@@ -7,6 +7,7 @@ import { MemorySteward } from "./steward/index.js";
 import { WorkflowAdvisor } from "./advisor/index.js";
 import { PatternAnalyzer } from "./advisor/patterns.js";
 import { transcribeToVTT } from "./meeting/stt.js";
+import { ConnectorMarketplace, BUILT_IN_CONNECTORS } from "./connectors/marketplace.js";
 
 interface CliArgs {
   command: string;
@@ -29,6 +30,8 @@ interface CliArgs {
   tool?: string;
   token?: string;
   write?: boolean;
+  // audit-log flags
+  user?: string;
 }
 
 export function parseCliArgs(args: string[]): CliArgs {
@@ -92,6 +95,9 @@ export function parseCliArgs(args: string[]): CliArgs {
       case "--write":
         result.write = true;
         break;
+      case "--user":
+        result.user = args[++i];
+        break;
       default:
         // Positional argument = content (for store command)
         if (!arg.startsWith("--")) {
@@ -143,6 +149,9 @@ export async function handleCli(
     case "audit":
       await handleAudit(store, initStore);
       break;
+    case "audit-log":
+      await handleAuditLog(store, initStore, parsed);
+      break;
     case "briefing":
       await handleBriefing(store, initStore, parsed);
       break;
@@ -172,6 +181,9 @@ export async function handleCli(
       break;
     case "org":
       await handleOrg(store, initStore, args.slice(1));
+      break;
+    case "connectors":
+      handleConnectorsMarketplace();
       break;
     default:
       printUsage();
@@ -819,6 +831,63 @@ async function handleOrg(
   }
 }
 
+async function handleAuditLog(
+  store: CortexStore,
+  initStore: () => Promise<void>,
+  args: CliArgs,
+): Promise<void> {
+  await initStore();
+  const entries = store.database.queryAuditLog({
+    userId: args.user,
+    since: args.since,
+    limit: args.limit ?? 100,
+  });
+
+  if (entries.length === 0) {
+    console.log("No audit log entries found.");
+    return;
+  }
+
+  for (const e of entries) {
+    const user = e.userId ?? "system";
+    const tool = e.toolName ? ` [${e.toolName}]` : "";
+    const query = e.query ? ` q="${e.query}"` : "";
+    const count = e.resultCount !== undefined ? ` results=${e.resultCount}` : "";
+    console.log(`${e.timestamp}  ${user}  ${e.action}${tool}${query}${count}`);
+  }
+}
+
+function handleConnectorsMarketplace(): void {
+  const marketplace = new ConnectorMarketplace();
+  for (const manifest of BUILT_IN_CONNECTORS) {
+    marketplace.register(manifest);
+  }
+
+  const all = marketplace.list();
+  const configured = all.filter(c => c.configured);
+  const unconfigured = all.filter(c => !c.configured);
+
+  console.log(`Connector Marketplace (${all.length} available)\n`);
+
+  if (configured.length > 0) {
+    console.log(`Configured (${configured.length}):`);
+    for (const c of configured) {
+      console.log(`  [✓ configured] ${c.name} (${c.id})`);
+      console.log(`    ${c.description}`);
+    }
+    console.log(``);
+  }
+
+  if (unconfigured.length > 0) {
+    console.log(`Not configured (${unconfigured.length}):`);
+    for (const c of unconfigured) {
+      console.log(`  [✗ not configured] ${c.name} (${c.id})`);
+      console.log(`    ${c.description}`);
+      console.log(`    Required env: ${c.requiredEnvVars.join(", ")}`);
+    }
+  }
+}
+
 function printUsage(): void {
   console.log(`Usage: hive-memory <command> [options]
 
@@ -842,6 +911,7 @@ Commands:
   lifecycle [run|stats]   Data lifecycle management (archive old entities)
   backup    Backup SQLite database (--output <path>, default: cortex-backup.db)
   supersede <old-id> <new-id>   Mark entity as superseded by newer entity
+  connectors            List all available connectors with configuration status
   org create <name> <slug>      Create organization + default workspace
   org list                      List all organizations
   org invite <org-slug> <user-id>   Add user to organization
