@@ -12,6 +12,8 @@ import { registerMeetingTools } from "./meeting-tools.js";
 import { registerStewardTools } from "./steward-tools.js";
 import { registerAdvisorTools } from "./advisor-tools.js";
 import { registerUserTools } from "./user-tools.js";
+import { registerOrgTools } from "./org-tools.js";
+import { registerGraphTools } from "./graph-tools.js";
 import { recordToolCall } from "../observability/metrics.js";
 import { logAudit, classifyAction } from "../observability/audit.js";
 import { getCurrentRequestContext } from "../request-context.js";
@@ -91,6 +93,8 @@ export function registerTools(
   registerStewardTools(safeTool, store);
   registerAdvisorTools(safeTool, db);
   registerUserTools(safeTool, db, userContext);
+  registerOrgTools(safeTool, db, userContext);
+  registerGraphTools(safeTool, db);
 
   // Audit log tool (admin only)
   safeTool(

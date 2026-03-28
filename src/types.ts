@@ -1,3 +1,20 @@
+export interface Organization {
+  id: string;
+  name: string;
+  slug: string;
+  createdAt: string;
+  status: string;
+}
+
+export interface Workspace {
+  id: string;
+  orgId: string;
+  name: string;
+  slug: string;
+  createdAt: string;
+  status: string;
+}
+
 export interface User {
   id: string;
   name: string;
@@ -5,6 +22,8 @@ export interface User {
   role: string;
   createdAt: string;
   status: string;
+  orgId?: string;
+  workspaceId?: string;
 }
 
 export interface ProjectEntry {
@@ -280,6 +299,7 @@ export interface Entity {
   entityType: EntityType;
   project?: string;
   namespace: string;
+  orgId?: string;
   title?: string;
   content: string;
   tags: string[];

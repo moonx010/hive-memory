@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { mkdirSync } from "node:fs";
 import { createSchema } from "./schema.js";
-import type { Entity, ConnectorConfig } from "../types.js";
+import type { Entity, ConnectorConfig, Organization, Workspace } from "../types.js";
 import { VectorStore } from "../search/vector-store.js";
 import { rrfFusion, buildEmbedText } from "../search/hybrid.js";
 import type { ACLContext } from "../acl/types.js";
@@ -41,6 +41,24 @@ interface EntityRow {
   content_hash: string | null;
   valid_from: string | null;
   valid_to: string | null;
+  org_id: string | null;
+}
+
+interface OrganizationRow {
+  id: string;
+  name: string;
+  slug: string;
+  created_at: string;
+  status: string;
+}
+
+interface WorkspaceRow {
+  id: string;
+  org_id: string;
+  name: string;
+  slug: string;
+  created_at: string;
+  status: string;
 }
 
 interface SynapseRow {
@@ -194,6 +212,8 @@ export interface ListEntitiesOptions {
   acl?: ACLContext;
   /** When true, include entities with a non-null valid_to (temporally superseded). Default: false */
   includeSuperseded?: boolean;
+  /** Tenant isolation: when set, only return entities with this org_id */
+  orgId?: string;
 }
 
 export interface SearchEntitiesOptions {
@@ -206,6 +226,8 @@ export interface SearchEntitiesOptions {
   acl?: ACLContext;
   /** When true, include entities with a non-null valid_to (temporally superseded). Default: false */
   includeSuperseded?: boolean;
+  /** Tenant isolation: when set, only return entities with this org_id */
+  orgId?: string;
 }
 
 export interface CountEntitiesOptions {
@@ -247,6 +269,7 @@ function rowToEntity(row: EntityRow): Entity {
     contentHash: row.content_hash ?? undefined,
     validFrom: row.valid_from ?? undefined,
     validTo: row.valid_to ?? undefined,
+    orgId: row.org_id ?? undefined,
   };
 }
 
@@ -277,6 +300,7 @@ function entityToRow(entity: Entity): Record<string, unknown> {
     content_hash: entity.contentHash ?? null,
     valid_from: entity.validFrom ?? null,
     valid_to: entity.validTo ?? null,
+    org_id: entity.orgId ?? null,
   };
 }
 
@@ -422,14 +446,14 @@ export class HiveDatabase {
         source_system, source_external_id, source_url, source_connector,
         author, visibility, domain, confidence,
         created_at, updated_at, expires_at, status, superseded_by, content_hash,
-        valid_from, valid_to
+        valid_from, valid_to, org_id
       ) VALUES (
         @id, @entity_type, @project, @namespace, @title, @content,
         @tags, @keywords, @attributes,
         @source_system, @source_external_id, @source_url, @source_connector,
         @author, @visibility, @domain, @confidence,
         @created_at, @updated_at, @expires_at, @status, @superseded_by, @content_hash,
-        @valid_from, @valid_to
+        @valid_from, @valid_to, @org_id
       )
     `).run(row);
   }
@@ -516,6 +540,7 @@ export class HiveDatabase {
       hasKeywords = false,
       acl,
       includeSuperseded = false,
+      orgId,
     } = options;
 
     const conditions: string[] = [];
@@ -571,6 +596,10 @@ export class HiveDatabase {
       conditions.push(clause);
       Object.assign(params, aclParams);
     }
+    if (orgId !== undefined) {
+      conditions.push("e.org_id = @_acl_org_id");
+      params._acl_org_id = orgId;
+    }
 
     const where =
       conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -600,7 +629,7 @@ export class HiveDatabase {
   }
 
   searchEntities(query: string, options: SearchEntitiesOptions = {}): Entity[] {
-    const { project, entityType, domain, namespace, limit = 20, acl, includeSuperseded = false } = options;
+    const { project, entityType, domain, namespace, limit = 20, acl, includeSuperseded = false, orgId } = options;
 
     const extraConditions: string[] = [];
     const params: Record<string, unknown> = { query, limit };
@@ -629,6 +658,10 @@ export class HiveDatabase {
       const { clause, params: aclParams } = defaultACLPolicy.sqlWhereClause(acl);
       extraConditions.push(clause);
       Object.assign(params, aclParams);
+    }
+    if (orgId !== undefined) {
+      extraConditions.push("e.org_id = @_acl_org_id");
+      params._acl_org_id = orgId;
     }
 
     const extraWhere =
@@ -1288,10 +1321,10 @@ export class HiveDatabase {
 
   // ── User methods ────────────────────────────────────────────────────────────
 
-  insertUser(user: { id: string; name: string; email?: string; apiKeyHash: string; role: string; createdAt: string; status: string }): void {
+  insertUser(user: { id: string; name: string; email?: string; apiKeyHash: string; role: string; createdAt: string; status: string; orgId?: string; workspaceId?: string }): void {
     this.db.prepare(`
-      INSERT INTO users (id, name, email, api_key_hash, role, created_at, status)
-      VALUES (@id, @name, @email, @api_key_hash, @role, @created_at, @status)
+      INSERT INTO users (id, name, email, api_key_hash, role, created_at, status, org_id, workspace_id)
+      VALUES (@id, @name, @email, @api_key_hash, @role, @created_at, @status, @org_id, @workspace_id)
     `).run({
       id: user.id,
       name: user.name,
@@ -1300,13 +1333,15 @@ export class HiveDatabase {
       role: user.role,
       created_at: user.createdAt,
       status: user.status,
+      org_id: user.orgId ?? null,
+      workspace_id: user.workspaceId ?? null,
     });
   }
 
-  getUserByApiKeyHash(hash: string): { id: string; name: string; email?: string; role: string; createdAt: string; status: string } | null {
+  getUserByApiKeyHash(hash: string): { id: string; name: string; email?: string; role: string; createdAt: string; status: string; orgId?: string; workspaceId?: string } | null {
     const row = this.db
       .prepare("SELECT * FROM users WHERE api_key_hash = ? AND status = 'active'")
-      .get(hash) as { id: string; name: string; email: string | null; api_key_hash: string; role: string; created_at: string; status: string } | undefined;
+      .get(hash) as { id: string; name: string; email: string | null; api_key_hash: string; role: string; created_at: string; status: string; org_id: string | null; workspace_id: string | null } | undefined;
     if (!row) return null;
     return {
       id: row.id,
@@ -1315,13 +1350,15 @@ export class HiveDatabase {
       role: row.role,
       createdAt: row.created_at,
       status: row.status,
+      orgId: row.org_id ?? undefined,
+      workspaceId: row.workspace_id ?? undefined,
     };
   }
 
-  listUsers(): { id: string; name: string; email?: string; role: string; createdAt: string; status: string }[] {
+  listUsers(): { id: string; name: string; email?: string; role: string; createdAt: string; status: string; orgId?: string; workspaceId?: string }[] {
     const rows = this.db
       .prepare("SELECT * FROM users ORDER BY created_at ASC")
-      .all() as { id: string; name: string; email: string | null; api_key_hash: string; role: string; created_at: string; status: string }[];
+      .all() as { id: string; name: string; email: string | null; api_key_hash: string; role: string; created_at: string; status: string; org_id: string | null; workspace_id: string | null }[];
     return rows.map((row) => ({
       id: row.id,
       name: row.name,
@@ -1329,6 +1366,8 @@ export class HiveDatabase {
       role: row.role,
       createdAt: row.created_at,
       status: row.status,
+      orgId: row.org_id ?? undefined,
+      workspaceId: row.workspace_id ?? undefined,
     }));
   }
 
@@ -1344,9 +1383,77 @@ export class HiveDatabase {
     return rows.map((r) => r.label_id);
   }
 
+  /** Assign a user to an organization (and optionally a workspace). */
+  assignUserToOrg(userId: string, orgId: string, workspaceId?: string): void {
+    this.db.prepare("UPDATE users SET org_id = ?, workspace_id = ? WHERE id = ?")
+      .run(orgId, workspaceId ?? null, userId);
+  }
+
   rotateUserApiKey(userId: string, newHash: string, graceUntil: string): void {
     this.db.prepare("UPDATE users SET api_key_hash = ?, revoked_at = ? WHERE id = ?")
       .run(newHash, graceUntil, userId);
+  }
+
+  // ── Organization methods ─────────────────────────────────────────────────────
+
+  createOrganization(name: string, slug: string): Organization {
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO organizations (id, name, slug, created_at, status)
+      VALUES (?, ?, ?, ?, 'active')
+    `).run(id, name, slug, now);
+    return { id, name, slug, createdAt: now, status: "active" };
+  }
+
+  getOrganization(id: string): Organization | null {
+    const row = this.db
+      .prepare("SELECT * FROM organizations WHERE id = ?")
+      .get(id) as OrganizationRow | undefined;
+    if (!row) return null;
+    return { id: row.id, name: row.name, slug: row.slug, createdAt: row.created_at, status: row.status };
+  }
+
+  getOrganizationBySlug(slug: string): Organization | null {
+    const row = this.db
+      .prepare("SELECT * FROM organizations WHERE slug = ?")
+      .get(slug) as OrganizationRow | undefined;
+    if (!row) return null;
+    return { id: row.id, name: row.name, slug: row.slug, createdAt: row.created_at, status: row.status };
+  }
+
+  listOrganizations(): Organization[] {
+    const rows = this.db
+      .prepare("SELECT * FROM organizations ORDER BY created_at ASC")
+      .all() as OrganizationRow[];
+    return rows.map((row) => ({ id: row.id, name: row.name, slug: row.slug, createdAt: row.created_at, status: row.status }));
+  }
+
+  // ── Workspace methods ─────────────────────────────────────────────────────────
+
+  createWorkspace(orgId: string, name: string, slug: string): Workspace {
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO workspaces (id, org_id, name, slug, created_at, status)
+      VALUES (?, ?, ?, ?, ?, 'active')
+    `).run(id, orgId, name, slug, now);
+    return { id, orgId, name, slug, createdAt: now, status: "active" };
+  }
+
+  getWorkspace(id: string): Workspace | null {
+    const row = this.db
+      .prepare("SELECT * FROM workspaces WHERE id = ?")
+      .get(id) as WorkspaceRow | undefined;
+    if (!row) return null;
+    return { id: row.id, orgId: row.org_id, name: row.name, slug: row.slug, createdAt: row.created_at, status: row.status };
+  }
+
+  listWorkspaces(orgId: string): Workspace[] {
+    const rows = this.db
+      .prepare("SELECT * FROM workspaces WHERE org_id = ? ORDER BY created_at ASC")
+      .all(orgId) as WorkspaceRow[];
+    return rows.map((row) => ({ id: row.id, orgId: row.org_id, name: row.name, slug: row.slug, createdAt: row.created_at, status: row.status }));
   }
 
   // ── Backup ────────────────────────────────────────────────────────────────────

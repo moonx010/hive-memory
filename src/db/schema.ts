@@ -1,6 +1,6 @@
 import type { Database } from "better-sqlite3";
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 export function createSchema(db: Database): void {
   // ── Schema version tracking ───────────────────────────────────────────────
@@ -186,6 +186,28 @@ export function createSchema(db: Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_users_api_key_hash ON users(api_key_hash);
     CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
+
+    -- ── organizations (v7) ───────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS organizations (
+      id         TEXT PRIMARY KEY,
+      name       TEXT NOT NULL,
+      slug       TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      status     TEXT NOT NULL DEFAULT 'active'
+    );
+
+    -- ── workspaces (v7) ──────────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS workspaces (
+      id         TEXT PRIMARY KEY,
+      org_id     TEXT NOT NULL REFERENCES organizations(id),
+      name       TEXT NOT NULL,
+      slug       TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      status     TEXT NOT NULL DEFAULT 'active',
+      UNIQUE(org_id, slug)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_workspaces_org ON workspaces(org_id);
   `);
 
   // Run column migrations only when upgrading from an older schema version
@@ -258,6 +280,15 @@ export function createSchema(db: Database): void {
   // v6: index for temporal validity queries
   try { db.exec(`CREATE INDEX IF NOT EXISTS idx_entities_valid_from ON entities(valid_from)`); } catch { /* exists */ }
   try { db.exec(`CREATE INDEX IF NOT EXISTS idx_entities_valid_to ON entities(valid_to)`); } catch { /* exists */ }
+
+  // v7: multi-tenancy columns
+  try { db.exec(`ALTER TABLE users ADD COLUMN org_id TEXT`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE users ADD COLUMN workspace_id TEXT`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE entities ADD COLUMN org_id TEXT`); } catch { /* exists */ }
+
+  // v7: index for tenant-scoped entity queries
+  try { db.exec(`CREATE INDEX IF NOT EXISTS idx_entities_org ON entities(org_id)`); } catch { /* exists */ }
+  try { db.exec(`CREATE INDEX IF NOT EXISTS idx_users_org ON users(org_id)`); } catch { /* exists */ }
 
   // Update schema_meta version to current
   db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('version', ?)").run(String(SCHEMA_VERSION));
