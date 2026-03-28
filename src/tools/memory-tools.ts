@@ -4,6 +4,7 @@ import type { MemoryCategory, AxonType } from "../types.js";
 import { validateId } from "../store/io.js";
 import type { SafeToolFn } from "./index.js";
 import { getCurrentRequestContext } from "../request-context.js";
+import { agenticRetrieve } from "../search/agentic-retrieval.js";
 
 export function registerMemoryTools(safeTool: SafeToolFn, store: CortexStore) {
   safeTool(
@@ -136,6 +137,79 @@ export function registerMemoryTools(safeTool: SafeToolFn, store: CortexStore) {
         })
         .join("\n\n---\n\n");
       return { content: [{ type: "text" as const, text }] };
+    },
+  );
+
+  safeTool(
+    "memory_deep_search",
+    "Deep multi-step search with query rewriting and agentic retrieval. Use for complex questions that need multiple search passes.",
+    {
+      query: z.string().describe("The complex query to search for"),
+      max_steps: z.number().optional().describe("Maximum number of retrieval steps (default 3)"),
+    },
+    async (args) => {
+      const query = args.query as string;
+      const maxSteps = (args.max_steps as number | undefined) ?? 3;
+      const db = store.database;
+
+      // Resolve ACL for the current request
+      const { resolveACL } = await import("../acl/resolver.js");
+      const acl = resolveACL(db);
+      const result = await agenticRetrieve(query, db, { maxSteps, acl });
+
+      if (result.finalResults.length === 0) {
+        return { content: [{ type: "text" as const, text: "No matching memories found." }] };
+      }
+
+      const stepsText = result.steps
+        .map((s, i) => `Step ${i + 1} [${s.query}] → ${s.results.length} results (${s.reasoning})`)
+        .join("\n");
+
+      const resultsText = result.finalResults
+        .map((e, i) => {
+          const title = e.title ? `**${e.title}**\n` : "";
+          return `${i + 1}. ${title}${e.content.slice(0, 300)}`;
+        })
+        .join("\n\n---\n\n");
+
+      const text = `## Search Steps\n${stepsText}\n\n## Results (${result.finalResults.length})\n\n${resultsText}`;
+      return { content: [{ type: "text" as const, text }] };
+    },
+  );
+
+  safeTool(
+    "memory_supersede",
+    "Mark an entity as superseded by a newer entity. The old entity remains in the graph but is excluded from search by default. Use when a fact has been updated or replaced.",
+    {
+      old_id: z.string().describe("ID of the entity being superseded (the old/outdated fact)"),
+      new_id: z.string().describe("ID of the entity that supersedes it (the new/updated fact)"),
+      reason: z.string().optional().describe("Optional reason for supersession"),
+    },
+    async (args) => {
+      const oldId = args.old_id as string;
+      const newId = args.new_id as string;
+      const reason = args.reason as string | undefined;
+
+      const db = store.database;
+      const oldEntity = db.getEntity(oldId);
+      const newEntity = db.getEntity(newId);
+
+      if (!oldEntity) {
+        return { content: [{ type: "text" as const, text: `Error: Entity not found: ${oldId}` }], isError: true };
+      }
+      if (!newEntity) {
+        return { content: [{ type: "text" as const, text: `Error: Entity not found: ${newId}` }], isError: true };
+      }
+
+      db.supersede(oldId, newId);
+
+      const reasonText = reason ? ` Reason: ${reason}` : "";
+      return {
+        content: [{
+          type: "text" as const,
+          text: `Superseded: ${oldId} → ${newId}.${reasonText}\nOld entity marked with valid_to and status=superseded. Refinement synapse created.`,
+        }],
+      };
     },
   );
 

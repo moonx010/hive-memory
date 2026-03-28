@@ -296,6 +296,10 @@ export interface Entity {
   status: EntityStatus;
   supersededBy?: string;
   contentHash?: string;
+  /** ISO8601 — when this fact became valid (defaults to createdAt) */
+  validFrom?: string;
+  /** ISO8601 — when this fact was superseded/expired (null = currently valid) */
+  validTo?: string;
 }
 
 export interface ConnectorConfig {
