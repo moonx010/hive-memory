@@ -84,14 +84,14 @@ export function registerUserTools(safeTool: SafeToolFn, db: HiveDatabase, userCo
           if (!user) {
             return { content: [{ type: "text" as const, text: `Error: user not found: ${userId}` }], isError: true };
           }
-          const { newKey, graceUntil } = rotateApiKey(db, userId);
+          const { newKey } = rotateApiKey(db, userId);
           const lines = [
             `API key rotated for user ${user.name} (${userId}).`,
             ``,
             `New API key (save this — it won't be shown again):`,
             `  ${newKey}`,
             ``,
-            `Grace period expires: ${graceUntil}`,
+            `Note: The old key is revoked immediately.`,
           ];
           return { content: [{ type: "text" as const, text: lines.join("\n") }] };
         }

@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { CortexStore } from "../store.js";
 import type { SafeToolFn } from "./index.js";
 import { MemorySteward } from "../steward/index.js";
+import { resolveACL } from "../acl/resolver.js";
 
 export function registerStewardTools(
   safeTool: SafeToolFn,
@@ -12,7 +13,8 @@ export function registerStewardTools(
     "Run a data quality audit — find duplicates, stale entities, orphans, and unconfirmed inferred entities",
     {},
     async () => {
-      const steward = new MemorySteward(store.database);
+      const acl = resolveACL(store.database);
+      const steward = new MemorySteward(store.database, acl);
       const report = steward.audit();
       return {
         content: [
@@ -38,7 +40,8 @@ export function registerStewardTools(
       period: z.enum(["daily", "weekly"]).optional(),
     },
     async ({ period }) => {
-      const steward = new MemorySteward(store.database);
+      const acl = resolveACL(store.database);
+      const steward = new MemorySteward(store.database, acl);
       const report = steward.briefing(
         (period as "daily" | "weekly" | undefined) ?? "daily",
       );

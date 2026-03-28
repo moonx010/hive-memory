@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { HiveDatabase } from "../db/database.js";
 import type { SafeToolFn } from "./index.js";
 import { buildGraphRAGSummaries } from "../search/graph-rag.js";
+import { resolveACL } from "../acl/resolver.js";
 
 export function registerGraphTools(safeTool: SafeToolFn, db: HiveDatabase): void {
   safeTool(
@@ -14,7 +15,8 @@ export function registerGraphTools(safeTool: SafeToolFn, db: HiveDatabase): void
     async (args) => {
       const orgId = args.org_id as string | undefined;
       const project = args.project as string | undefined;
-      const result = buildGraphRAGSummaries(db, { orgId, project });
+      const acl = resolveACL(db);
+      const result = buildGraphRAGSummaries(db, { orgId, project, acl });
       return {
         content: [
           {

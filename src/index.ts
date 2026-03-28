@@ -17,6 +17,7 @@ import { verifySlackSignature, handleSlackEvent } from "./bot/slack-bot.js";
 import { recordRequest, recordSync, getMetrics } from "./observability/metrics.js";
 import { checkRateLimit } from "./observability/rate-limit.js";
 import { requestContext } from "./request-context.js";
+import { initAuditDb } from "./observability/audit.js";
 
 // Re-export getCurrentRequestContext for consumers
 export { getCurrentRequestContext } from "./request-context.js";
@@ -118,6 +119,7 @@ async function main() {
 
     const store = createStore();
     await store.init();
+    initAuditDb(store.database);
     await registerConnectors(store);
 
     // McpServer is created per-request because the SDK only allows
@@ -165,8 +167,16 @@ async function main() {
         return;
       }
 
-      // ── Gateway status endpoint ───────────────────────────────────────────────
+      // ── Gateway status endpoint (auth required) ─────────────────────────────
       if (req.url === "/gateway/status" && req.method === "GET") {
+        if (authToken) {
+          const provided = req.headers.authorization?.replace("Bearer ", "");
+          if (provided !== authToken) {
+            res.writeHead(401);
+            res.end("Unauthorized");
+            return;
+          }
+        }
         const { loadGatewayConfig } = await import("./gateway/mcp-gateway.js");
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(loadGatewayConfig()));
@@ -175,9 +185,21 @@ async function main() {
 
       // ── Slack Events API route ──────────────────────────────────────────────
       if (slackBotEnabled && req.url === "/slack/events" && req.method === "POST") {
-        // Collect body bytes (needed for signature verification)
+        // Collect body bytes (needed for signature verification) — limit to 1MB
+        const MAX_BODY_SIZE = 1_048_576;
         const chunks: Buffer[] = [];
-        for await (const chunk of req) chunks.push(chunk as Buffer);
+        let totalSize = 0;
+        let oversized = false;
+        for await (const chunk of req) {
+          totalSize += (chunk as Buffer).length;
+          if (totalSize > MAX_BODY_SIZE) { oversized = true; break; }
+          chunks.push(chunk as Buffer);
+        }
+        if (oversized) {
+          res.writeHead(413);
+          res.end("Payload Too Large");
+          return;
+        }
         const body = Buffer.concat(chunks).toString();
 
         // Parse payload
@@ -401,6 +423,7 @@ async function main() {
   // Default: MCP server mode
   const store = createStore();
   await store.init();
+  initAuditDb(store.database);
 
   // Log hybrid search mode at startup
   if (!process.env.CORTEX_EMBEDDING_PROVIDER || process.env.CORTEX_EMBEDDING_PROVIDER === "none") {
@@ -420,6 +443,14 @@ async function main() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  // Graceful shutdown for stdio mode
+  const shutdownStdio = () => {
+    try { store.database.close(); } catch { /* already closed */ }
+    process.exit(0);
+  };
+  process.on("SIGTERM", shutdownStdio);
+  process.on("SIGINT", shutdownStdio);
 }
 
 // ── stats command ──
@@ -609,11 +640,11 @@ async function handleUserCli(store: CortexStore, args: string[]): Promise<void> 
         console.error(`User not found: ${userId}`);
         process.exit(1);
       }
-      const { newKey, graceUntil } = rotateApiKey(db, userId);
+      const { newKey } = rotateApiKey(db, userId);
       console.log(`API key rotated for user ${user.name} (${userId}).`);
       console.log(`\nNew API key (save this — it won't be shown again):`);
       console.log(`  ${newKey}`);
-      console.log(`\nGrace period expires: ${graceUntil}`);
+      console.log(`\nNote: The old key is revoked immediately.`);
       break;
     }
 

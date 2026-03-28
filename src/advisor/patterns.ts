@@ -1,4 +1,5 @@
 import type { HiveDatabase } from "../db/database.js";
+import type { ACLContext } from "../acl/types.js";
 
 export interface ActivityPattern {
   /** Hour distribution of entity creation (0-23 → count) */
@@ -32,7 +33,10 @@ export interface PatternReport {
 }
 
 export class PatternAnalyzer {
-  constructor(private db: HiveDatabase) {}
+  private acl?: ACLContext;
+  constructor(private db: HiveDatabase, acl?: ACLContext) {
+    this.acl = acl;
+  }
 
   analyze(opts?: { since?: string; project?: string }): PatternReport {
     const since =
@@ -46,6 +50,7 @@ export class PatternAnalyzer {
       project: opts?.project,
       limit: 5000,
       sort: "created_at",
+      acl: this.acl,
     });
 
     // 1. Hourly distribution (by createdAt)
@@ -98,6 +103,7 @@ export class PatternAnalyzer {
       since,
       project: opts?.project,
       limit: 1000,
+      acl: this.acl,
     });
 
     // Map: meetingId → list of attendee names
@@ -111,7 +117,7 @@ export class PatternAnalyzer {
       );
       const attendees: string[] = [];
       for (const synapse of synapses) {
-        const person = this.db.getEntity(synapse.source);
+        const person = this.db.getEntity(synapse.source, this.acl);
         if (person && person.entityType === "person" && person.title) {
           attendees.push(person.title);
         }

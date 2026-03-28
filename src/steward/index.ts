@@ -1,5 +1,6 @@
 import type { HiveDatabase } from "../db/database.js";
 import type { Entity } from "../types.js";
+import type { ACLContext } from "../acl/types.js";
 
 export interface StewardReport {
   duplicateCandidates: Array<{
@@ -25,14 +26,17 @@ export interface BriefingReport {
 }
 
 export class MemorySteward {
-  constructor(private db: HiveDatabase) {}
+  private acl?: ACLContext;
+  constructor(private db: HiveDatabase, acl?: ACLContext) {
+    this.acl = acl;
+  }
 
   /**
    * Run data quality audit — find duplicates, stale data, orphans.
    */
   audit(): StewardReport {
     // 1. Find duplicate person candidates (same name, different source)
-    const persons = this.db.listEntities({ entityType: "person", limit: 500 });
+    const persons = this.db.listEntities({ acl: this.acl, entityType: "person", limit: 500 });
     const nameMap = new Map<string, Entity[]>();
     for (const p of persons) {
       const key = (p.title ?? "").toLowerCase().trim();
@@ -70,13 +74,13 @@ export class MemorySteward {
     const staleDate = new Date(
       Date.now() - 90 * 24 * 60 * 60 * 1000,
     ).toISOString();
-    const staleEntities = this.db.listEntities({
+    const staleEntities = this.db.listEntities({ acl: this.acl,
       until: staleDate,
       limit: 1000,
     }).length;
 
     // 3. Orphaned entities (no synapses)
-    const allEntities = this.db.listEntities({ limit: 500 });
+    const allEntities = this.db.listEntities({ acl: this.acl, limit: 500 });
     let orphanedEntities = 0;
     for (const entity of allEntities) {
       const synapses = this.db.getSynapsesByEntry(entity.id, "both");
@@ -86,15 +90,15 @@ export class MemorySteward {
     }
 
     // 4. Unconfirmed inferred entities
-    const inferred = this.db.listEntities({ limit: 1000 }).filter(
+    const inferred = this.db.listEntities({ acl: this.acl, limit: 1000 }).filter(
       (e) => e.confidence === "inferred",
     );
 
     // 5. Count unresolved conflicts (conflict synapses between two active entities)
     const conflictSynapses = this.db.getSynapsesByAxon("conflict");
     const unresolvedConflicts = conflictSynapses.filter((c) => {
-      const source = this.db.getEntity(c.source);
-      const target = this.db.getEntity(c.target);
+      const source = this.db.getEntity(c.source, this.acl);
+      const target = this.db.getEntity(c.target, this.acl);
       return source?.status === "active" && target?.status === "active";
     });
 
@@ -154,7 +158,7 @@ export class MemorySteward {
     ).toISOString();
 
     // New entities
-    const newEntities = this.db.listEntities({ since, limit: 500 });
+    const newEntities = this.db.listEntities({ acl: this.acl, since, limit: 500 });
 
     // New decisions
     const newDecisions = newEntities
@@ -162,7 +166,7 @@ export class MemorySteward {
       .map((e) => ({ id: e.id, title: e.title ?? e.content.slice(0, 80) }));
 
     // Pending actions
-    const allTasks = this.db.listEntities({
+    const allTasks = this.db.listEntities({ acl: this.acl,
       entityType: "task",
       limit: 100,
     });
