@@ -152,7 +152,10 @@ export function registerMemoryTools(safeTool: SafeToolFn, store: CortexStore) {
       const maxSteps = (args.max_steps as number | undefined) ?? 3;
       const db = store.database;
 
-      const result = await agenticRetrieve(query, db, { maxSteps });
+      // Resolve ACL for the current request
+      const { resolveACL } = await import("../acl/resolver.js");
+      const acl = resolveACL(db);
+      const result = await agenticRetrieve(query, db, { maxSteps, acl });
 
       if (result.finalResults.length === 0) {
         return { content: [{ type: "text" as const, text: "No matching memories found." }] };

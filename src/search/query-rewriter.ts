@@ -60,9 +60,10 @@ export function ruleBasedRewrite(query: string): RewrittenQuery {
 }
 
 export function classifyIntent(query: string): RewrittenQuery["intent"] {
+  // Check decision/person/temporal BEFORE factual — more specific patterns first
+  if (/\bdecid(e|ed)\b|결정|decision|approved|agreed/.test(query)) return "decision";
   if (/who|누가|person|author/.test(query)) return "person";
   if (/when|언제|last|recent|history/.test(query)) return "temporal";
-  if (/decided|결정|decision|approved|agreed/.test(query)) return "decision";
   if (/what|how|why|explain/.test(query)) return "factual";
   return "exploratory";
 }

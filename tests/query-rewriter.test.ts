@@ -53,7 +53,11 @@ describe("classifyIntent", () => {
   });
 
   it("classifies recent queries as temporal", () => {
-    expect(classifyIntent("most recent decisions")).toBe("temporal");
+    expect(classifyIntent("most recent updates")).toBe("temporal");
+  });
+
+  it("classifies 'decide' as decision intent", () => {
+    expect(classifyIntent("what did we decide about auth")).toBe("decision");
   });
 
   it("classifies decision queries as decision", () => {
