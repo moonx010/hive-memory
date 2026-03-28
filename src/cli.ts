@@ -149,6 +149,9 @@ export async function handleCli(
     case "analyze":
       await handleAnalyze(store, initStore);
       break;
+    case "communities":
+      await handleCommunities(store, initStore);
+      break;
     case "patterns":
       await handlePatterns(store, initStore, parsed);
       break;
@@ -166,6 +169,9 @@ export async function handleCli(
       break;
     case "supersede":
       await handleSupersede(store, initStore, args.slice(1));
+      break;
+    case "org":
+      await handleOrg(store, initStore, args.slice(1));
       break;
     default:
       printUsage();
@@ -436,6 +442,35 @@ async function handleAnalyze(
   const advisor = new WorkflowAdvisor(store.database);
   const report = advisor.analyze();
   console.log(report.markdownOutput);
+}
+
+async function handleCommunities(
+  store: CortexStore,
+  initStore: () => Promise<void>,
+): Promise<void> {
+  await initStore();
+  const { buildGraphRAGSummaries } = await import("./search/graph-rag.js");
+  const result = buildGraphRAGSummaries(store.database);
+
+  console.log(`# Knowledge Graph Communities\n`);
+  console.log(result.globalSummary);
+  console.log();
+
+  for (const community of result.communities) {
+    console.log(`## ${community.label} (${community.size} entities)`);
+    console.log(community.summary);
+    if (community.topEntities.length > 0) {
+      console.log(`Top entities:`);
+      for (const e of community.topEntities) {
+        console.log(`  - [${e.id}] ${e.title}`);
+      }
+    }
+    console.log();
+  }
+
+  if (result.communities.length === 0) {
+    console.log("No communities detected (need at least 3 connected entities).");
+  }
 }
 
 async function handlePatterns(
@@ -714,6 +749,76 @@ async function handleSupersede(
   console.log(`Refinement synapse created: ${newId} → ${oldId}`);
 }
 
+async function handleOrg(
+  store: CortexStore,
+  initStore: () => Promise<void>,
+  args: string[],
+): Promise<void> {
+  // Usage: hive-memory org <subcommand> [args...]
+  const subcommand = args[0];
+  await initStore();
+  const db = store.database;
+
+  switch (subcommand) {
+    case "create": {
+      // hive-memory org create <name> <slug>
+      const name = args[1];
+      const slug = args[2];
+      if (!name || !slug) {
+        console.error("Usage: hive-memory org create <name> <slug>");
+        process.exit(1);
+      }
+      const org = db.createOrganization(name, slug);
+      const workspace = db.createWorkspace(org.id, "default", "default");
+      console.log(`Organization created: ${org.name} [${org.slug}] (id: ${org.id})`);
+      console.log(`Default workspace created: ${workspace.name} [${workspace.slug}] (id: ${workspace.id})`);
+      break;
+    }
+
+    case "list": {
+      const orgs = db.listOrganizations();
+      if (orgs.length === 0) {
+        console.log("No organizations found.");
+        return;
+      }
+      for (const org of orgs) {
+        const workspaces = db.listWorkspaces(org.id);
+        console.log(`${org.id}  ${org.name}  [${org.slug}]  ${org.status}`);
+        for (const ws of workspaces) {
+          console.log(`  workspace: ${ws.slug} (${ws.id})`);
+        }
+      }
+      break;
+    }
+
+    case "invite": {
+      // hive-memory org invite <org-slug> <user-id>
+      const orgSlug = args[1];
+      const userId = args[2];
+      if (!orgSlug || !userId) {
+        console.error("Usage: hive-memory org invite <org-slug> <user-id>");
+        process.exit(1);
+      }
+      const org = db.getOrganizationBySlug(orgSlug);
+      if (!org) {
+        console.error(`Organization not found: ${orgSlug}`);
+        process.exit(1);
+      }
+      const workspaces = db.listWorkspaces(org.id);
+      const defaultWorkspace = workspaces[0];
+      db.assignUserToOrg(userId, org.id, defaultWorkspace?.id);
+      const wsInfo = defaultWorkspace ? ` (workspace: ${defaultWorkspace.slug})` : "";
+      console.log(`User ${userId} added to organization ${org.name} (${orgSlug})${wsInfo}.`);
+      break;
+    }
+
+    default:
+      console.error(`Unknown org subcommand: ${subcommand ?? "(none)"}`);
+      console.error("Usage: hive-memory org <create|list|invite>");
+      process.exit(1);
+  }
+}
+
 function printUsage(): void {
   console.log(`Usage: hive-memory <command> [options]
 
@@ -731,11 +836,15 @@ Commands:
   briefing  Generate daily/weekly briefing (--type daily|weekly)
   analyze   Analyze workflow patterns and generate insights
   patterns  Analyze aggregated working patterns (--since, --project)
+  communities   Detect knowledge graph communities (GraphRAG-style summaries)
   connect   Generate MCP config for Claude Code or Cursor (--url, --key, --tool, --write)
   import-slack <dir>   Import Slack Enterprise Grid export
   lifecycle [run|stats]   Data lifecycle management (archive old entities)
   backup    Backup SQLite database (--output <path>, default: cortex-backup.db)
   supersede <old-id> <new-id>   Mark entity as superseded by newer entity
+  org create <name> <slug>      Create organization + default workspace
+  org list                      List all organizations
+  org invite <org-slug> <user-id>   Add user to organization
 
   hook session-end    Auto-save session (Claude Code hook)
 
