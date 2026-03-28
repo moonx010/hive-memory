@@ -77,6 +77,14 @@ async function registerConnectors(store: CortexStore): Promise<void> {
     );
   }
 
+  if (process.env["RECALL_API_KEY"]) {
+    imports.push(
+      import("./connectors/recall.js")
+        .then(({ RecallConnector }) => { registry.register(new RecallConnector()); })
+        .catch((err) => { console.error(`[cortex] Failed to load Recall connector: ${err?.message ?? err}`); }),
+    );
+  }
+
   await Promise.allSettled(imports);
 }
 
@@ -262,6 +270,36 @@ async function main() {
         return;
       }
 
+      // ── Recall.ai webhook route ─────────────────────────────────────────────
+      if (req.url === "/recall/events" && req.method === "POST") {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const body = Buffer.concat(chunks).toString();
+
+        let payload: { event?: string; data?: unknown };
+        try {
+          payload = JSON.parse(body) as typeof payload;
+        } catch {
+          res.writeHead(400);
+          res.end("Bad Request");
+          return;
+        }
+
+        // Ack immediately
+        res.writeHead(200);
+        res.end();
+
+        // Process async
+        import("./connectors/recall.js")
+          .then(async ({ handleRecallWebhook }) => {
+            await handleRecallWebhook(payload, store);
+          })
+          .catch((err: unknown) => {
+            console.error("[recall] Webhook handling error:", err);
+          });
+        return;
+      }
+
       // ── MCP route (default) ─────────────────────────────────────────────────
       const { authorized, userId, userName } = resolveAuth(store.database, req.headers.authorization, authToken);
       if (!authorized) {
@@ -327,6 +365,19 @@ async function main() {
           }
         } catch (err) {
           console.error(`[auto-sync] enrichment failed: ${err}`);
+        }
+
+        // Auto-schedule Recall bots for upcoming calendar meetings
+        if (process.env["RECALL_API_KEY"]) {
+          try {
+            const { scheduleBotsForUpcomingMeetings } = await import("./connectors/recall.js");
+            const result = await scheduleBotsForUpcomingMeetings(store.database);
+            if (result.scheduled > 0) {
+              console.error(`[auto-sync] Recall: scheduled ${result.scheduled} bots, skipped ${result.skipped}`);
+            }
+          } catch (err) {
+            console.error(`[auto-sync] Recall auto-schedule failed: ${err}`);
+          }
         }
 
         // Daily backup (check if last backup was >24h ago)

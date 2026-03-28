@@ -241,6 +241,45 @@ async function executeBriefing(store: CortexStore, query: string, person?: strin
   return blocks;
 }
 
+async function executeJoinMeeting(meetingUrl?: string, title?: string): Promise<SlackBlock[]> {
+  if (!meetingUrl) {
+    return [{
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: "Please provide a meeting URL. Example:\n`@bumble-bee join https://meet.google.com/abc-defg-hij`",
+      },
+    }];
+  }
+
+  if (!process.env["RECALL_API_KEY"]) {
+    return [{
+      type: "section",
+      text: { type: "mrkdwn", text: "Meeting bot is not configured. Set `RECALL_API_KEY` to enable." },
+    }];
+  }
+
+  try {
+    const { joinMeeting } = await import("../connectors/recall.js");
+    const result = await joinMeeting(meetingUrl, title || undefined);
+    return [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `🐝 Joining meeting...\n*URL:* ${meetingUrl}\n*Bot ID:* \`${result.botId}\`\n*Status:* ${result.status}\n\nI'll post meeting notes to <#${process.env["MEETING_SLACK_CHANNEL"] ?? "this channel"}> when the meeting ends.`,
+        },
+      },
+    ];
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return [{
+      type: "section",
+      text: { type: "mrkdwn", text: `Failed to join meeting: ${msg}` },
+    }];
+  }
+}
+
 // ── Event handler ─────────────────────────────────────────────────────────────
 
 /**
@@ -297,6 +336,9 @@ export async function handleSlackEvent(
         case "briefing":
         case "summarize":
           blocks = await executeBriefing(store, intent.query, intent.person);
+          break;
+        case "join_meeting":
+          blocks = await executeJoinMeeting(intent.meetingUrl, intent.query);
           break;
         default:
           blocks = formatHelp();

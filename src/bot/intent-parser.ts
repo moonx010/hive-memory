@@ -4,13 +4,16 @@
  */
 
 export interface ParsedIntent {
-  intent: "recall" | "meeting_notes" | "who_knows" | "action_items" | "briefing" | "summarize";
+  intent: "recall" | "meeting_notes" | "who_knows" | "action_items" | "briefing" | "summarize" | "join_meeting";
   query: string;
   dateHint?: string;
   person?: string;
+  meetingUrl?: string;
 }
 
 // ── Regex patterns (fast fallback) ─────────────────────────────────────────
+
+const MEETING_URL_PATTERN = /https?:\/\/(?:meet\.google\.com|zoom\.us|teams\.microsoft\.com)\/\S+/i;
 
 const INTENT_PATTERNS: Array<{ intent: ParsedIntent["intent"]; pattern: RegExp }> = [
   { intent: "meeting_notes", pattern: /meeting\s*(?:notes?|minutes?|록)|회의\s*(?:록|노트)/i },
@@ -53,6 +56,14 @@ export function parseIntentRegex(rawText: string): ParsedIntent {
   const text = stripMention(rawText);
   const dateHint = extractDateHint(text);
   const person = extractPerson(text);
+  const meetingUrlMatch = text.match(MEETING_URL_PATTERN);
+  const meetingUrl = meetingUrlMatch?.[0];
+
+  // If there's a meeting URL, it's a join request regardless of other keywords
+  if (meetingUrl) {
+    const query = text.replace(MEETING_URL_PATTERN, "").replace(/\s+/g, " ").trim();
+    return { intent: "join_meeting", query, meetingUrl };
+  }
 
   for (const { intent, pattern } of INTENT_PATTERNS) {
     if (pattern.test(text)) {
@@ -95,10 +106,11 @@ Message: "${text}"
 
 Respond ONLY with JSON:
 {
-  "intent": "recall" | "meeting_notes" | "who_knows" | "action_items" | "briefing" | "summarize",
+  "intent": "recall" | "meeting_notes" | "who_knows" | "action_items" | "briefing" | "summarize" | "join_meeting",
   "query": "extracted search keywords (short, specific)",
   "person": "person name mentioned or null",
-  "dateHint": "date reference or null"
+  "dateHint": "date reference or null",
+  "meetingUrl": "meeting URL if present or null"
 }
 
 Intent guide:
@@ -107,7 +119,8 @@ Intent guide:
 - who_knows: asking who is expert/responsible for something
 - action_items: looking for pending tasks/todos
 - briefing: asking for a summary/overview of recent activity
-- summarize: asking to summarize specific content or person's messages`,
+- summarize: asking to summarize specific content or person's messages
+- join_meeting: asking the bot to join/record a meeting (has a meeting URL or says "join")`,
         }],
       }),
     });
@@ -126,9 +139,10 @@ Intent guide:
       query?: string;
       person?: string | null;
       dateHint?: string | null;
+      meetingUrl?: string | null;
     };
 
-    const validIntents = ["recall", "meeting_notes", "who_knows", "action_items", "briefing", "summarize"];
+    const validIntents = ["recall", "meeting_notes", "who_knows", "action_items", "briefing", "summarize", "join_meeting"];
     const intent = validIntents.includes(parsed.intent ?? "")
       ? (parsed.intent as ParsedIntent["intent"])
       : "recall";
@@ -138,6 +152,7 @@ Intent guide:
       query: parsed.query ?? text,
       person: parsed.person ?? undefined,
       dateHint: parsed.dateHint ?? undefined,
+      meetingUrl: parsed.meetingUrl ?? undefined,
     };
   } catch {
     return parseIntentRegex(rawText);

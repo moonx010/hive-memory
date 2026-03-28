@@ -246,6 +246,7 @@ export function formatHelp(): SlackBlock[] {
           "• `@BumbleBee meeting notes [from <date>]` — list meeting notes",
           "• `@BumbleBee who knows about <topic>` — find contributors",
           "• `@BumbleBee action items` — list active tasks",
+          "• `@BumbleBee join <meeting-url>` — join & record a meeting",
           "• `@BumbleBee help` — show this message",
           "",
           "_Korean is also supported: 찾아, 알려줘, 회의록, 누가, 할 일_",
