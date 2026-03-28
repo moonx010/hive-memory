@@ -225,6 +225,17 @@ export function createSchema(db: Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
     CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id);
+
+    -- Tamper protection: prevent DELETE/UPDATE on audit_log
+    CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
+      BEFORE DELETE ON audit_log BEGIN
+        SELECT RAISE(ABORT, 'Audit log entries cannot be deleted');
+      END;
+
+    CREATE TRIGGER IF NOT EXISTS audit_log_no_update
+      BEFORE UPDATE ON audit_log BEGIN
+        SELECT RAISE(ABORT, 'Audit log entries cannot be modified');
+      END;
   `);
 
   // Run column migrations only when upgrading from an older schema version
