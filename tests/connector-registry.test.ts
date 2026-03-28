@@ -1,10 +1,6 @@
-/**
- * Backward-compatibility test for the marketplace re-export.
- * ConnectorMarketplace is now an alias for ConnectorRegistry (see src/connectors/marketplace.ts).
- */
 import { describe, it, expect } from "vitest";
-import { ConnectorMarketplace, BUILT_IN_CONNECTORS } from "../src/connectors/marketplace.js";
-import type { ConnectorManifest } from "../src/connectors/marketplace.js";
+import { ConnectorRegistry, BUILT_IN_CONNECTORS } from "../src/connectors/registry.js";
+import type { ConnectorManifest } from "../src/connectors/registry.js";
 
 function makeManifest(overrides: Partial<ConnectorManifest> = {}): ConnectorManifest {
   return {
@@ -20,35 +16,39 @@ function makeManifest(overrides: Partial<ConnectorManifest> = {}): ConnectorMani
   };
 }
 
-describe("ConnectorMarketplace (backward-compat alias for ConnectorRegistry)", () => {
+describe("ConnectorRegistry", () => {
+  let registry: ConnectorRegistry;
+
+  registry = new ConnectorRegistry();
+
   it("register and list — registered connector appears in list", () => {
-    const marketplace = new ConnectorMarketplace();
-    marketplace.register(makeManifest({ id: "my-connector" }));
-    const all = marketplace.list();
+    registry = new ConnectorRegistry();
+    registry.register(makeManifest({ id: "my-connector" }));
+    const all = registry.list();
     expect(all).toHaveLength(1);
     expect(all[0].id).toBe("my-connector");
   });
 
   it("get returns the manifest by id", () => {
-    const marketplace = new ConnectorMarketplace();
+    registry = new ConnectorRegistry();
     const manifest = makeManifest({ id: "abc" });
-    marketplace.register(manifest);
-    expect(marketplace.get("abc")).toEqual(manifest);
+    registry.register(manifest);
+    expect(registry.get("abc")).toEqual(manifest);
   });
 
   it("get returns undefined for unknown id", () => {
-    const marketplace = new ConnectorMarketplace();
-    expect(marketplace.get("nonexistent")).toBeUndefined();
+    registry = new ConnectorRegistry();
+    expect(registry.get("nonexistent")).toBeUndefined();
   });
 
   it("configured is true when all required env vars are set", () => {
-    const marketplace = new ConnectorMarketplace();
+    registry = new ConnectorRegistry();
     const originalVal = process.env.TEST_TOKEN;
     process.env.TEST_TOKEN = "my-token";
 
     try {
-      marketplace.register(makeManifest({ requiredEnvVars: ["TEST_TOKEN"] }));
-      const [item] = marketplace.list();
+      registry.register(makeManifest({ requiredEnvVars: ["TEST_TOKEN"] }));
+      const [item] = registry.list();
       expect(item.configured).toBe(true);
     } finally {
       if (originalVal === undefined) {
@@ -60,25 +60,25 @@ describe("ConnectorMarketplace (backward-compat alias for ConnectorRegistry)", (
   });
 
   it("configured is false when a required env var is missing", () => {
-    const marketplace = new ConnectorMarketplace();
+    registry = new ConnectorRegistry();
     const key = "DEFINITELY_NOT_SET_VAR_12345";
     delete process.env[key];
 
-    marketplace.register(makeManifest({ requiredEnvVars: [key] }));
-    const [item] = marketplace.list();
+    registry.register(makeManifest({ requiredEnvVars: [key] }));
+    const [item] = registry.list();
     expect(item.configured).toBe(false);
   });
 
   it("configured is false when only some required env vars are set", () => {
-    const marketplace = new ConnectorMarketplace();
+    registry = new ConnectorRegistry();
     const setKey = "TEST_SET_KEY_12345";
     const unsetKey = "TEST_UNSET_KEY_12345";
     process.env[setKey] = "value";
     delete process.env[unsetKey];
 
     try {
-      marketplace.register(makeManifest({ requiredEnvVars: [setKey, unsetKey] }));
-      const [item] = marketplace.list();
+      registry.register(makeManifest({ requiredEnvVars: [setKey, unsetKey] }));
+      const [item] = registry.list();
       expect(item.configured).toBe(false);
     } finally {
       delete process.env[setKey];
@@ -86,19 +86,19 @@ describe("ConnectorMarketplace (backward-compat alias for ConnectorRegistry)", (
   });
 
   it("list returns spread copies — modifying result does not affect registry", () => {
-    const marketplace = new ConnectorMarketplace();
-    marketplace.register(makeManifest({ id: "stable" }));
-    const result = marketplace.list();
+    registry = new ConnectorRegistry();
+    registry.register(makeManifest({ id: "stable" }));
+    const result = registry.list();
     result[0].id = "mutated";
-    expect(marketplace.get("stable")).toBeDefined();
+    expect(registry.get("stable")).toBeDefined();
   });
 
   it("multiple connectors can be registered", () => {
-    const marketplace = new ConnectorMarketplace();
-    marketplace.register(makeManifest({ id: "a" }));
-    marketplace.register(makeManifest({ id: "b" }));
-    marketplace.register(makeManifest({ id: "c" }));
-    expect(marketplace.list()).toHaveLength(3);
+    registry = new ConnectorRegistry();
+    registry.register(makeManifest({ id: "a" }));
+    registry.register(makeManifest({ id: "b" }));
+    registry.register(makeManifest({ id: "c" }));
+    expect(registry.list()).toHaveLength(3);
   });
 });
 
@@ -132,11 +132,11 @@ describe("BUILT_IN_CONNECTORS", () => {
     expect(ids).toContain("outlook");
   });
 
-  it("can be registered into marketplace", () => {
-    const marketplace = new ConnectorMarketplace();
+  it("can be registered into registry", () => {
+    const registry = new ConnectorRegistry();
     for (const manifest of BUILT_IN_CONNECTORS) {
-      marketplace.register(manifest);
+      registry.register(manifest);
     }
-    expect(marketplace.list()).toHaveLength(BUILT_IN_CONNECTORS.length);
+    expect(registry.list()).toHaveLength(BUILT_IN_CONNECTORS.length);
   });
 });

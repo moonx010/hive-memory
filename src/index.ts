@@ -5,6 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer } from "node:http";
 import { join, dirname } from "node:path";
+import { mkdirSync, existsSync, readdirSync, unlinkSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -304,6 +305,31 @@ async function main() {
           }
         } catch (err) {
           console.error(`[auto-sync] enrichment failed: ${err}`);
+        }
+
+        // Daily backup (check if last backup was >24h ago)
+        const backupDir = process.env.CORTEX_BACKUP_DIR ?? join(process.env.CORTEX_DATA_DIR ?? "", "backups");
+        try {
+          mkdirSync(backupDir, { recursive: true });
+
+          // Check if we already backed up today
+          const today = new Date().toISOString().split("T")[0];
+          const files = existsSync(backupDir) ? readdirSync(backupDir) : [];
+          const todayBackup = files.find(f => f.includes(today));
+
+          if (!todayBackup) {
+            const backupPath = join(backupDir, `cortex-${today}.db`);
+            store.database.backup(backupPath);
+            console.error(`[auto-backup] Database backed up to ${backupPath}`);
+
+            // Keep only last 7 backups
+            const sorted = files.filter(f => f.endsWith(".db")).sort().reverse();
+            for (const old of sorted.slice(7)) {
+              try { unlinkSync(join(backupDir, old)); } catch { /* ignore */ }
+            }
+          }
+        } catch (err) {
+          console.error(`[auto-backup] Backup failed: ${err}`);
         }
       };
 
