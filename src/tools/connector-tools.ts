@@ -3,6 +3,7 @@ import { HiveDatabase } from "../db/database.js";
 import { CheckpointManager } from "../connectors/checkpoint.js";
 import type { CortexStore } from "../store.js";
 import type { SafeToolFn } from "./index.js";
+import { ConnectorMarketplace, BUILT_IN_CONNECTORS } from "../connectors/marketplace.js";
 
 // ── Helpers ──
 
@@ -128,6 +129,47 @@ export function registerConnectorTools(safeTool: SafeToolFn, db: HiveDatabase, s
 
       lines.push(`─────────────────────────────────────────`);
       lines.push(`Total: ${connectors.length} connector(s), ${activeCount} active, ${errorCount} error(s), ${totalEntries} entries`);
+
+      return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+    },
+  );
+
+  // ── connector_marketplace ──
+
+  safeTool(
+    "connector_marketplace",
+    "List all available connectors with their configuration status",
+    {},
+    async (_args) => {
+      const marketplace = new ConnectorMarketplace();
+      for (const manifest of BUILT_IN_CONNECTORS) {
+        marketplace.register(manifest);
+      }
+
+      const all = marketplace.list();
+      const configured = all.filter(c => c.configured);
+      const unconfigured = all.filter(c => !c.configured);
+
+      const lines: string[] = [
+        `Connector Marketplace (${all.length} available)`,
+        ``,
+      ];
+
+      if (configured.length > 0) {
+        lines.push(`Configured (${configured.length}):`);
+        for (const c of configured) {
+          lines.push(`  [✓] ${c.name} (${c.id}) — ${c.description}`);
+        }
+        lines.push(``);
+      }
+
+      if (unconfigured.length > 0) {
+        lines.push(`Not configured (${unconfigured.length}):`);
+        for (const c of unconfigured) {
+          lines.push(`  [✗] ${c.name} (${c.id}) — ${c.description}`);
+          lines.push(`      Required env: ${c.requiredEnvVars.join(", ")}`);
+        }
+      }
 
       return { content: [{ type: "text" as const, text: lines.join("\n") }] };
     },

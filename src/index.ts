@@ -103,7 +103,7 @@ async function handleHook(args: string[]): Promise<void> {
 
 // --- CLI commands ---
 
-const CLI_COMMANDS = new Set(["store", "recall", "status", "inject", "sync", "cleanup", "stats", "team", "enrich", "meeting", "transcribe", "audit", "briefing", "analyze", "patterns", "connect", "user", "org", "backup", "import-slack", "lifecycle"]);
+const CLI_COMMANDS = new Set(["store", "recall", "status", "inject", "sync", "cleanup", "stats", "team", "enrich", "meeting", "transcribe", "audit", "audit-log", "briefing", "analyze", "patterns", "connect", "user", "org", "backup", "import-slack", "lifecycle"]);
 
 // --- Main ---
 
@@ -153,6 +153,14 @@ async function main() {
       if (req.url === "/metrics" && req.method === "GET") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(getMetrics()));
+        return;
+      }
+
+      // ── Gateway status endpoint ───────────────────────────────────────────────
+      if (req.url === "/gateway/status" && req.method === "GET") {
+        const { loadGatewayConfig } = await import("./gateway/mcp-gateway.js");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(loadGatewayConfig()));
         return;
       }
 
