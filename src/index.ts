@@ -119,12 +119,17 @@ async function main() {
     await store.init();
     await registerConnectors(store);
 
-    const server = new McpServer({
-      name: "cortex",
-      version: pkg.version as string,
-    });
-
-    registerTools(server, store);
+    // McpServer is created per-request because the SDK only allows
+    // one transport per server instance. Tools are registered fresh
+    // each time but share the same store/db (thread-safe via SQLite WAL).
+    function createMcpServer() {
+      const srv = new McpServer({
+        name: "cortex",
+        version: pkg.version as string,
+      });
+      registerTools(srv, store);
+      return srv;
+    }
 
     const slackBotEnabled = process.env["SLACK_BOT_ENABLED"] === "true";
     const slackSigningSecret = process.env["SLACK_SIGNING_SECRET"] ?? "";
@@ -225,9 +230,10 @@ async function main() {
 
       await requestContext.run({ userId, userName }, async () => {
         try {
+          const perRequestServer = createMcpServer();
           const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
           res.on("close", () => { transport.close(); });
-          await server.connect(transport);
+          await perRequestServer.connect(transport);
           await transport.handleRequest(req, res);
         } catch (err) {
           requestError = true;
