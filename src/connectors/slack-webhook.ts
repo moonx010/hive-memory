@@ -71,11 +71,19 @@ export function processSlackMessageEvent(
     confidence: "confirmed",
   });
 
-  // Apply ACL fields via updateEntity after creation
+  // Apply ACL fields via updateEntity + updateEntityAttributes
   db.updateEntity(entityId, {
     visibility: acl.visibility as import("../types.js").Entity["visibility"],
     ...(acl.ownerId ? { author: acl.ownerId } : {}),
   });
+
+  // Persist ACL metadata in attributes
+  const aclAttrs: Record<string, unknown> = {};
+  if (acl.ownerId) aclAttrs.ownerId = acl.ownerId;
+  if (acl.aclMembers?.length) aclAttrs.aclMembers = acl.aclMembers;
+  if (Object.keys(aclAttrs).length > 0) {
+    db.updateEntityAttributes(entityId, aclAttrs);
+  }
 
   return { stored: true, entityId };
 }

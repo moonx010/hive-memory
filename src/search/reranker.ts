@@ -59,6 +59,9 @@ async function cohereRerank(query: string, results: Array<{ id: string; content:
 
   const documents = results.map(r => `${r.title ?? ""}\n${r.content}`.slice(0, 500));
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+
   const res = await fetch("https://api.cohere.ai/v1/rerank", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -68,7 +71,8 @@ async function cohereRerank(query: string, results: Array<{ id: string; content:
       documents,
       top_n: topK ?? results.length,
     }),
-  });
+    signal: controller.signal,
+  }).finally(() => clearTimeout(timeout));
 
   if (!res.ok) return results.map((r, i) => ({ entityId: r.id, score: 1 / (1 + i), originalRank: i }));
 
