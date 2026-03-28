@@ -77,6 +77,10 @@ export interface EntityDraft {
   confidence: "confirmed" | "inferred";
   /** Optional status override (e.g., "archived" for cancelled events) */
   status?: "active" | "superseded" | "archived";
+  /** ACL fields derived from source system */
+  visibility?: "private" | "dm" | "team" | "org" | "public" | "personal";
+  aclMembers?: string[];
+  ownerId?: string;
 }
 
 export interface ConnectorRegistry {

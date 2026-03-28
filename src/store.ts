@@ -30,6 +30,7 @@ import { HiveDatabase } from "./db/database.js";
 import type { ListEntitiesOptions, SearchEntitiesOptions } from "./db/database.js";
 import type { Entity } from "./types.js";
 import { createEmbedder } from "./search/embedder.js";
+import { rerankResults } from "./search/reranker.js";
 import { rewriteQuery } from "./search/query-rewriter.js";
 import { agenticRetrieve } from "./search/agentic-retrieval.js";
 import type { ConnectorRegistry, RawDocument } from "./connectors/types.js";
@@ -383,18 +384,18 @@ export class CortexStore {
       } catch {
         // Embedding unavailable — fall through to BM25-only
       }
-      return this._recallViaDb(effectiveQuery, projectId, limit, agentId, embedding);
+      return await this._recallViaDb(effectiveQuery, projectId, limit, agentId, embedding);
     }
     return this.memories.recallMemories(query, projectId, limit, agentId);
   }
 
-  private _recallViaDb(
+  private async _recallViaDb(
     query: string,
     projectId: string | undefined,
     limit: number,
     agentId: string | undefined,
     embedding?: Float32Array,
-  ): HiveSearchResult[] {
+  ): Promise<HiveSearchResult[]> {
     const db = this._db!;
     const searchOptions: SearchEntitiesOptions = {
       ...(projectId ? { project: projectId } : {}),
@@ -438,7 +439,33 @@ export class CortexStore {
     }
 
     // Step 3: RRF fusion
-    return rrfFusion(ftsResults, graphResults, limit);
+    const fused = rrfFusion(ftsResults, graphResults, limit);
+
+    // Step 4: Optional cross-encoder reranking (top 20)
+    if (process.env.CORTEX_RERANKER && process.env.CORTEX_RERANKER !== "none") {
+      const top20 = fused.slice(0, 20);
+      const rerankInput = top20.map((r) => ({
+        id: r.entryId ?? "",
+        content: r.snippet,
+      }));
+      const reranked = await rerankResults(query, rerankInput, limit);
+      const idToResult = new Map(top20.map((r) => [r.entryId ?? "", r]));
+      const rerankedResults: HiveSearchResult[] = [];
+      for (const rr of reranked) {
+        const original = idToResult.get(rr.entityId);
+        if (original) {
+          rerankedResults.push({ ...original, score: rr.score });
+        }
+      }
+      // Append any remaining results beyond top 20 that weren't reranked
+      const rerankedIds = new Set(reranked.map((r) => r.entityId));
+      for (const r of fused.slice(20)) {
+        if (!rerankedIds.has(r.entryId ?? "")) rerankedResults.push(r);
+      }
+      return rerankedResults.slice(0, limit);
+    }
+
+    return fused;
   }
 
   async traverseMemories(query: string, projectId?: string, limit = 10, depth = 3, decay = 0.5): Promise<HiveSearchResult[]> {
@@ -648,6 +675,9 @@ export class CortexStore {
               } else {
                 const now = new Date().toISOString();
                 const keywords = this._extractKeywords(draft.content + " " + (draft.title ?? ""));
+                const aclAttrs: Record<string, unknown> = {};
+                if (draft.ownerId !== undefined) aclAttrs.ownerId = draft.ownerId;
+                if (draft.aclMembers !== undefined) aclAttrs.aclMembers = draft.aclMembers;
                 const entity: Entity = {
                   id: randomUUID(),
                   entityType: draft.entityType as Entity["entityType"],
@@ -657,10 +687,10 @@ export class CortexStore {
                   content: draft.content,
                   tags: draft.tags,
                   keywords,
-                  attributes: { ...draft.attributes, ...syncMeta },
+                  attributes: { ...draft.attributes, ...aclAttrs, ...syncMeta },
                   source: draft.source,
                   author: draft.author,
-                  visibility: "personal",
+                  visibility: (draft.visibility as Entity["visibility"]) ?? "personal",
                   domain: draft.domain as Entity["domain"],
                   confidence: draft.confidence,
                   createdAt: now,
