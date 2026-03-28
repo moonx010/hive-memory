@@ -1,4 +1,5 @@
 import type { HiveDatabase } from "../db/database.js";
+import type { ACLContext } from "../acl/types.js";
 import { detectCommunities, type Community } from "./community.js";
 
 export interface GraphRAGResult {
@@ -18,10 +19,11 @@ export interface GraphRAGResult {
  */
 export function buildGraphRAGSummaries(
   db: HiveDatabase,
-  options?: { orgId?: string; project?: string },
+  options?: { orgId?: string; project?: string; acl?: ACLContext },
 ): GraphRAGResult {
-  // 1. Load active entities (tenant-scoped if orgId provided)
-  const entities = db.listEntities({ limit: 1000, ...options }).map((e) => ({
+  // 1. Load active entities (tenant-scoped if orgId provided, ACL-filtered)
+  const { acl, ...listOptions } = options ?? {};
+  const entities = db.listEntities({ limit: 1000, ...listOptions, acl }).map((e) => ({
     id: e.id,
     title: e.title ?? e.content.slice(0, 80),
     content: e.content,

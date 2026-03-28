@@ -77,22 +77,13 @@ export function registerBrowseTools(safeTool: SafeToolFn, db: HiveDatabase) {
       // Level 0: "/" — list all namespaces with counts
       if (!namespace) {
         const total = db.countEntities({});
-        const localCount = db.countEntities({ namespace: "local" });
+        const nsCounts = db.countEntitiesByGroup("namespace", { acl });
         const lines: string[] = [
           `/ (${total} total entries)`,
           ``,
-          `  local/   (${localCount} entries)`,
         ];
-        // List additional namespaces if any (beyond "local")
-        const allEntities = db.listEntities({ limit: 5000, acl });
-        const namespaces = new Map<string, number>();
-        for (const e of allEntities) {
-          namespaces.set(e.namespace, (namespaces.get(e.namespace) ?? 0) + 1);
-        }
-        for (const [ns, count] of namespaces.entries()) {
-          if (ns !== "local") {
-            lines.push(`  ${ns}/   (${count} entries)`);
-          }
+        for (const { key, count } of nsCounts) {
+          lines.push(`  ${key}/   (${count} entries)`);
         }
         return { content: [{ type: "text" as const, text: lines.join("\n") }] };
       }
@@ -115,8 +106,8 @@ export function registerBrowseTools(safeTool: SafeToolFn, db: HiveDatabase) {
 
       // Level 2: "/local/{project}" — entity type breakdown
       if (!entityType) {
-        const allForProject = db.listEntities({ project, namespace, limit: 5000, acl });
-        if (allForProject.length === 0) {
+        const typeCounts = db.countEntitiesByGroup("entity_type", { project, namespace, acl });
+        if (typeCounts.length === 0) {
           return {
             content: [
               {
@@ -126,16 +117,13 @@ export function registerBrowseTools(safeTool: SafeToolFn, db: HiveDatabase) {
             ],
           };
         }
-        const byType = new Map<string, number>();
-        for (const e of allForProject) {
-          byType.set(e.entityType, (byType.get(e.entityType) ?? 0) + 1);
-        }
+        const totalCount = typeCounts.reduce((sum, tc) => sum + tc.count, 0);
         const lines: string[] = [
-          `/${namespace}/${project}/ (${allForProject.length} entries)`,
+          `/${namespace}/${project}/ (${totalCount} entries)`,
           ``,
         ];
-        for (const [type, count] of [...byType.entries()].sort((a, b) => b[1] - a[1])) {
-          lines.push(`  ${type}/   (${count})`);
+        for (const { key, count } of typeCounts) {
+          lines.push(`  ${key}/   (${count})`);
         }
         return { content: [{ type: "text" as const, text: lines.join("\n") }] };
       }
@@ -218,21 +206,15 @@ export function registerBrowseTools(safeTool: SafeToolFn, db: HiveDatabase) {
       const trees: ProjectTree[] = [];
       for (const p of projects) {
         const ns = namespace ?? "local";
-        const total = db.countEntities({ project: p.id, namespace: ns });
+        const typeCounts = db.countEntitiesByGroup("entity_type", { project: p.id, namespace: ns, acl });
+        const total = typeCounts.reduce((sum, tc) => sum + tc.count, 0);
         if (total === 0 && namespace) continue;
 
-        const allEntries = db.listEntities({ project: p.id, namespace: ns, limit: 5000, acl });
-        const byType = new Map<string, number>();
-        for (const e of allEntries) {
-          byType.set(e.entityType, (byType.get(e.entityType) ?? 0) + 1);
-        }
         trees.push({
           id: p.id,
           name: p.name,
           total,
-          types: [...byType.entries()]
-            .map(([type, count]) => ({ type, count }))
-            .sort((a, b) => b.count - a.count),
+          types: typeCounts.map(({ key, count }) => ({ type: key, count })),
         });
       }
 

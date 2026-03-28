@@ -3,6 +3,7 @@ import type { CortexStore } from "../store.js";
 import type { SafeToolFn } from "./index.js";
 import type { EntityType } from "../types.js";
 import type { EnrichmentStage } from "../enrichment/types.js";
+import { resolveACL } from "../acl/resolver.js";
 
 export function registerContextTools(
   safeTool: SafeToolFn,
@@ -44,9 +45,11 @@ export function registerContextTools(
       });
 
       // Include a sample of recently enriched entities
+      const acl = resolveACL(store.database);
       const sample = store.database.listEntities({
         limit: 5,
         since: new Date(Date.now() - 60000).toISOString(),
+        acl,
       });
 
       return {
@@ -70,7 +73,8 @@ export function registerContextTools(
       confirmed: z.boolean().optional(),
     },
     async ({ action, entityId, mergeIntoId, confirmed }) => {
-      const entity = store.database.getEntity(entityId as string);
+      const acl = resolveACL(store.database);
+      const entity = store.database.getEntity(entityId as string, acl);
       if (!entity) throw new Error(`Entity not found: ${entityId}`);
 
       if (action === "list_candidates") {

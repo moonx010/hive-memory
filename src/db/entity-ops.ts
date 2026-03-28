@@ -161,6 +161,32 @@ export function computeContentHash(content: string): string {
   return crypto.createHash("sha256").update(content).digest("hex").slice(0, 16);
 }
 
+// ── FTS5 query sanitization ───────────────────────────────────────────────────
+
+/**
+ * Sanitize user input for FTS5 MATCH queries.
+ * Strips FTS5 operators and special syntax that would cause parse errors.
+ */
+export function sanitizeFTS5Query(query: string): string {
+  // Remove FTS5 column filters (e.g., "title:" or "content:")
+  let sanitized = query.replace(/\b\w+\s*:/g, "");
+  // Remove special FTS5 operators: ^, *, NEAR()
+  sanitized = sanitized.replace(/[*^]/g, "");
+  sanitized = sanitized.replace(/\bNEAR\s*\([^)]*\)/gi, "");
+  // Balance double quotes — if odd number, remove all
+  const quoteCount = (sanitized.match(/"/g) || []).length;
+  if (quoteCount % 2 !== 0) {
+    sanitized = sanitized.replace(/"/g, "");
+  }
+  // Remove parentheses that could break grouping
+  sanitized = sanitized.replace(/[()]/g, "");
+  // Collapse whitespace
+  sanitized = sanitized.replace(/\s+/g, " ").trim();
+  // If empty after sanitization, return a safe fallback
+  if (!sanitized) return '""';
+  return sanitized;
+}
+
 // ── Entity CRUD ───────────────────────────────────────────────────────────────
 
 export function insertEntity(db: BetterSqlite3.Database, entity: Entity): void {
@@ -381,8 +407,11 @@ export function listEntities(db: BetterSqlite3.Database, options: ListEntitiesOp
 export function searchEntities(db: BetterSqlite3.Database, query: string, options: SearchEntitiesOptions = {}): Entity[] {
   const { project, entityType, domain, namespace, limit = 20, acl, includeSuperseded = false, orgId } = options;
 
+  // Sanitize to prevent FTS5 parse errors from user input
+  const safeQuery = sanitizeFTS5Query(query);
+
   const extraConditions: string[] = [];
-  const params: Record<string, unknown> = { query, limit };
+  const params: Record<string, unknown> = { query: safeQuery, limit };
 
   if (project !== undefined) {
     extraConditions.push("e.project = @project");
@@ -419,20 +448,25 @@ export function searchEntities(db: BetterSqlite3.Database, query: string, option
       ? `AND ${extraConditions.join(" AND ")}`
       : "";
 
-  const rows = db
-    .prepare(
-      `SELECT e.*
-       FROM entities_fts f
-       JOIN entities e ON f.rowid = e.rowid
-       WHERE entities_fts MATCH @query
-         AND e.status = 'active'
-         ${extraWhere}
-       ORDER BY bm25(entities_fts)
-       LIMIT @limit`,
-    )
-    .all(params) as EntityRow[];
+  try {
+    const rows = db
+      .prepare(
+        `SELECT e.*
+         FROM entities_fts f
+         JOIN entities e ON f.rowid = e.rowid
+         WHERE entities_fts MATCH @query
+           AND e.status = 'active'
+           ${extraWhere}
+         ORDER BY bm25(entities_fts)
+         LIMIT @limit`,
+      )
+      .all(params) as EntityRow[];
 
-  return rows.map(rowToEntity);
+    return rows.map(rowToEntity);
+  } catch {
+    // FTS5 query parse error — return empty results instead of crashing
+    return [];
+  }
 }
 
 export function countEntities(db: BetterSqlite3.Database, options: CountEntitiesOptions = {}): number {

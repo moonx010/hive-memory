@@ -1,5 +1,6 @@
 import type { HiveDatabase } from "../db/database.js";
 import type { Entity } from "../types.js";
+import type { ACLContext } from "../acl/types.js";
 
 export interface WorkflowInsight {
   type: "repeated-topic" | "decision-bottleneck" | "stale-action" | "collaboration-gap";
@@ -31,28 +32,31 @@ function computeJaccard(a: string[], b: string[]): number {
 }
 
 export class WorkflowAdvisor {
-  constructor(private db: HiveDatabase) {}
+  private acl?: ACLContext;
+  constructor(private db: HiveDatabase, acl?: ACLContext) {
+    this.acl = acl;
+  }
 
   analyze(): AdvisorReport {
     const insights: WorkflowInsight[] = [];
 
     // ── 1. Repeated Topics ─────────────────────────────────────────────────────
-    const withKeywords = this.db.listEntities({ hasKeywords: true, limit: 500 });
+    const withKeywords = this.db.listEntities({ hasKeywords: true, limit: 500, acl: this.acl });
     const repeatedInsights = this.detectRepeatedTopics(withKeywords);
     insights.push(...repeatedInsights);
 
     // ── 2. Decision Bottleneck ─────────────────────────────────────────────────
-    const decisions = this.db.listEntities({ entityType: "decision", limit: 500 });
+    const decisions = this.db.listEntities({ entityType: "decision", limit: 500, acl: this.acl });
     const bottleneckInsights = this.detectDecisionBottlenecks(decisions, withKeywords);
     insights.push(...bottleneckInsights);
 
     // ── 3. Stale Actions ───────────────────────────────────────────────────────
-    const tasks = this.db.listEntities({ entityType: "task", limit: 500 });
+    const tasks = this.db.listEntities({ entityType: "task", limit: 500, acl: this.acl });
     const staleInsights = this.detectStaleActions(tasks);
     insights.push(...staleInsights);
 
     // ── 4. Collaboration Gaps ──────────────────────────────────────────────────
-    const meetings = this.db.listEntities({ entityType: "meeting", limit: 200 });
+    const meetings = this.db.listEntities({ entityType: "meeting", limit: 200, acl: this.acl });
     const gapInsights = this.detectCollaborationGaps(meetings, decisions, tasks);
     insights.push(...gapInsights);
 
@@ -242,8 +246,8 @@ export class WorkflowAdvisor {
     for (const [pair, meetingSet] of coMeetingPairs) {
       if (meetingSet.size >= 2 && !coDecisionPairs.has(pair)) {
         const [personA, personB] = pair.split(":");
-        const entityA = this.db.getEntity(personA);
-        const entityB = this.db.getEntity(personB);
+        const entityA = this.db.getEntity(personA, this.acl);
+        const entityB = this.db.getEntity(personB, this.acl);
         const nameA = entityA?.title ?? personA;
         const nameB = entityB?.title ?? personB;
 
@@ -301,7 +305,7 @@ export class WorkflowAdvisor {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)
       .map(([id, interactions]) => {
-        const entity = this.db.getEntity(id);
+        const entity = this.db.getEntity(id, this.acl);
         return { name: entity?.title ?? id, interactions };
       });
 

@@ -3,6 +3,7 @@ import type { HiveDatabase } from "../db/database.js";
 import type { SafeToolFn } from "./index.js";
 import { WorkflowAdvisor } from "../advisor/index.js";
 import { PatternAnalyzer } from "../advisor/patterns.js";
+import { resolveACL } from "../acl/resolver.js";
 
 export function registerAdvisorTools(
   safeTool: SafeToolFn,
@@ -13,7 +14,8 @@ export function registerAdvisorTools(
     "Analyze accumulated data to find team workflow patterns and suggest improvements — detects repeated topics, decision bottlenecks, stale actions, and collaboration gaps",
     {},
     async () => {
-      const advisor = new WorkflowAdvisor(db);
+      const acl = resolveACL(db);
+      const advisor = new WorkflowAdvisor(db, acl);
       const report = advisor.analyze();
       return {
         content: [
@@ -38,7 +40,8 @@ export function registerAdvisorTools(
       project: z.string().optional(),
     },
     async ({ since, project }) => {
-      const analyzer = new PatternAnalyzer(db);
+      const acl = resolveACL(db);
+      const analyzer = new PatternAnalyzer(db, acl);
       const report = analyzer.analyze({
         since: since as string | undefined,
         project: project as string | undefined,

@@ -8,6 +8,7 @@ import type { Entity, ConnectorConfig, Organization, Workspace } from "../types.
 import { VectorStore } from "../search/vector-store.js";
 import { rrfFusion, buildEmbedText } from "../search/hybrid.js";
 import type { ACLContext } from "../acl/types.js";
+import { defaultACLPolicy } from "../acl/policy.js";
 import * as entityOps from "./entity-ops.js";
 import type { ListEntitiesOptions, SearchEntitiesOptions, CountEntitiesOptions } from "./entity-ops.js";
 import * as synapseOps from "./synapse-ops.js";
@@ -302,6 +303,40 @@ export class HiveDatabase {
 
   countEntities(options: CountEntitiesOptions = {}): number {
     return entityOps.countEntities(this.db, options);
+  }
+
+  /** Group-by counts for namespace, entity_type, or project. */
+  countEntitiesByGroup(
+    groupBy: "namespace" | "entity_type" | "project",
+    filter?: { project?: string; namespace?: string; acl?: ACLContext },
+  ): Array<{ key: string; count: number }> {
+    const conditions: string[] = ["e.status = 'active'", "e.valid_to IS NULL"];
+    const params: Record<string, unknown> = {};
+
+    if (filter?.project) {
+      conditions.push("e.project = @project");
+      params.project = filter.project;
+    }
+    if (filter?.namespace) {
+      conditions.push("e.namespace = @namespace");
+      params.namespace = filter.namespace;
+    }
+    if (filter?.acl) {
+      const { clause, params: aclParams } = defaultACLPolicy.sqlWhereClause(filter.acl);
+      conditions.push(clause);
+      Object.assign(params, aclParams);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const col = groupBy === "entity_type" ? "e.entity_type" : `e.${groupBy}`;
+
+    const rows = this.db.prepare(
+      `SELECT ${col} as grp, COUNT(*) as cnt FROM entities e ${where} GROUP BY ${col} ORDER BY cnt DESC`
+    ).all(params) as Array<{ grp: string | null; cnt: number }>;
+
+    return rows
+      .filter(r => r.grp !== null)
+      .map(r => ({ key: r.grp!, count: r.cnt }));
   }
 
   // ── Synapse methods (delegated to synapse-ops.ts) ──────────────────────────
@@ -795,9 +830,9 @@ export class HiveDatabase {
       .run(orgId, workspaceId ?? null, userId);
   }
 
-  rotateUserApiKey(userId: string, newHash: string, graceUntil: string): void {
-    this.db.prepare("UPDATE users SET api_key_hash = ?, revoked_at = ? WHERE id = ?")
-      .run(newHash, graceUntil, userId);
+  rotateUserApiKey(userId: string, newHash: string): void {
+    this.db.prepare("UPDATE users SET api_key_hash = ? WHERE id = ?")
+      .run(newHash, userId);
   }
 
   // ── Organization methods ─────────────────────────────────────────────────────
