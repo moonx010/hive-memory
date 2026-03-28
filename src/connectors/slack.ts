@@ -8,6 +8,7 @@
  */
 
 import type { ConnectorPlugin, RawDocument, EntityDraft } from "./types.js";
+import { deriveACLFromSource } from "../acl/source-inherit.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -42,6 +43,18 @@ interface SlackMembersResponse {
   ok: boolean;
   members: string[];
   response_metadata?: { next_cursor?: string };
+  error?: string;
+}
+
+interface SlackChannelInfoResponse {
+  ok: boolean;
+  channel?: {
+    id: string;
+    is_private: boolean;
+    is_im: boolean;
+    is_mpim: boolean;
+    members?: string[];
+  };
   error?: string;
 }
 
@@ -148,6 +161,7 @@ export class SlackConnector implements ConnectorPlugin {
   private cursor: string | undefined;
   private readonly token: string;
   private readonly channels: string[];
+  private readonly _channelInfoCache = new Map<string, { isPrivate: boolean; isDM: boolean; isMPIM: boolean; members?: string[] }>();
 
   constructor() {
     this.token = process.env.SLACK_TOKEN ?? "";
@@ -199,10 +213,39 @@ export class SlackConnector implements ConnectorPlugin {
     }
   }
 
+  private async _fetchChannelInfo(channelId: string): Promise<{ isPrivate: boolean; isDM: boolean; isMPIM: boolean; members?: string[] }> {
+    const cached = this._channelInfoCache.get(channelId);
+    if (cached) return cached;
+
+    try {
+      const res = await slackFetch(
+        `https://slack.com/api/conversations.info?channel=${channelId}&include_num_members=true`,
+        this.token,
+      );
+      const data = (await res.json()) as SlackChannelInfoResponse;
+      const info = data.ok && data.channel
+        ? {
+            isPrivate: data.channel.is_private,
+            isDM: data.channel.is_im,
+            isMPIM: data.channel.is_mpim,
+            members: data.channel.members,
+          }
+        : { isPrivate: false, isDM: false, isMPIM: false };
+      this._channelInfoCache.set(channelId, info);
+      return info;
+    } catch {
+      const fallback = { isPrivate: false, isDM: false, isMPIM: false };
+      this._channelInfoCache.set(channelId, fallback);
+      return fallback;
+    }
+  }
+
   private async *_syncChannel(
     channelId: string,
     oldest?: string,
   ): AsyncGenerator<RawDocument> {
+    // Fetch channel type info once per channel (cached)
+    const channelInfo = await this._fetchChannelInfo(channelId);
     let nextCursor: string | undefined;
 
     do {
@@ -276,6 +319,11 @@ export class SlackConnector implements ConnectorPlugin {
             isThread,
             replyAuthors,
             reactions: (msg.reactions ?? []).map((r) => r.name),
+            // Channel ACL metadata
+            isPrivate: channelInfo.isPrivate,
+            isDM: channelInfo.isDM,
+            isMPIM: channelInfo.isMPIM,
+            channelMembers: channelInfo.members,
           },
         };
       }
@@ -381,6 +429,20 @@ export class SlackConnector implements ConnectorPlugin {
     if (isDecision) tags.push("decision");
     if (reactionCount >= 3) tags.push("highly-reacted");
 
+    // Derive ACL from channel type metadata
+    const acl = deriveACLFromSource({
+      connector: this.id,
+      isPrivate: meta.isPrivate as boolean | undefined,
+      isDM: meta.isDM as boolean | undefined,
+      isMPIM: meta.isMPIM as boolean | undefined,
+      channelMembers: meta.channelMembers as string[] | undefined,
+      // For DMs, channel members are the participants
+      participants: (meta.isDM || meta.isMPIM)
+        ? (meta.channelMembers as string[] | undefined)
+        : undefined,
+      author: doc.author,
+    });
+
     return [
       {
         entityType,
@@ -404,6 +466,9 @@ export class SlackConnector implements ConnectorPlugin {
         author: doc.author,
         domain: "conversations",
         confidence: "inferred",
+        visibility: acl.visibility,
+        aclMembers: acl.aclMembers,
+        ownerId: acl.ownerId,
       },
     ];
   }

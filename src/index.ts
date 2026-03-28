@@ -203,6 +203,23 @@ async function main() {
           console.error("[bumble-bee] Event handling error:", err);
         });
 
+        // Ingest message events into hive-memory
+        if ((payload as { event?: { type?: string } }).event?.type === "message") {
+          import("./connectors/slack-webhook.js")
+            .then(({ processSlackMessageEvent }) => {
+              const result = processSlackMessageEvent(
+                store.database,
+                (payload as { event: Parameters<typeof processSlackMessageEvent>[1] }).event,
+              );
+              if (result.stored) {
+                console.error(`[slack-webhook] Stored message ${result.entityId}`);
+              }
+            })
+            .catch((err: unknown) => {
+              console.error("[slack-webhook] Message ingestion error:", err);
+            });
+        }
+
         return;
       }
 
@@ -340,6 +357,14 @@ async function main() {
   // Default: MCP server mode
   const store = createStore();
   await store.init();
+
+  // Log hybrid search mode at startup
+  if (!process.env.CORTEX_EMBEDDING_PROVIDER || process.env.CORTEX_EMBEDDING_PROVIDER === "none") {
+    console.error("[cortex] Hybrid search: BM25 only (set CORTEX_EMBEDDING_PROVIDER=local for vector search)");
+  } else {
+    console.error(`[cortex] Hybrid search: BM25 + vector (${process.env.CORTEX_EMBEDDING_PROVIDER})`);
+  }
+
   await registerConnectors(store);
 
   const server = new McpServer({
