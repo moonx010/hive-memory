@@ -53,9 +53,12 @@ describe("provisionSSOUser", () => {
     const ctx = await createTestDb();
     db = ctx.db;
     dir = ctx.dir;
+    // Enable SSO so the runtime guard does not throw
+    vi.stubEnv("CORTEX_SSO_ENABLED", "true");
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     db.close();
     await rm(dir, { recursive: true, force: true });
   });

@@ -3,7 +3,7 @@ import { HiveDatabase } from "../db/database.js";
 import { CheckpointManager } from "../connectors/checkpoint.js";
 import type { CortexStore } from "../store.js";
 import type { SafeToolFn } from "./index.js";
-import { ConnectorMarketplace, BUILT_IN_CONNECTORS } from "../connectors/marketplace.js";
+import { ConnectorRegistry, BUILT_IN_CONNECTORS } from "../connectors/registry.js";
 
 // ── Helpers ──
 
@@ -141,12 +141,12 @@ export function registerConnectorTools(safeTool: SafeToolFn, db: HiveDatabase, s
     "List all available connectors with their configuration status",
     {},
     async (_args) => {
-      const marketplace = new ConnectorMarketplace();
+      const registry = new ConnectorRegistry();
       for (const manifest of BUILT_IN_CONNECTORS) {
-        marketplace.register(manifest);
+        registry.register(manifest);
       }
 
-      const all = marketplace.list();
+      const all = registry.list();
       const configured = all.filter(c => c.configured);
       const unconfigured = all.filter(c => !c.configured);
 

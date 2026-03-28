@@ -1,3 +1,16 @@
+/**
+ * SSO Foundation — interface + auto-provisioning.
+ *
+ * IMPORTANT: No SAML/OIDC flow is implemented yet.
+ * This module provides the interface for future SSO provider integration
+ * (e.g., via WorkOS, Auth0, or custom SAML).
+ *
+ * Current capabilities:
+ * - Config loading from env vars
+ * - User auto-provisioning from SSO callback data
+ *
+ * NOT implemented: login flow, token validation, callback handling.
+ */
 import type { HiveDatabase } from "../db/database.js";
 import { createUser } from "../auth.js";
 
@@ -34,6 +47,9 @@ export function provisionSSOUser(
   db: HiveDatabase,
   ssoResult: { email: string; name: string; orgId?: string },
 ): { userId: string; apiKey: string; isNew: boolean } {
+  if (!loadSSOConfig().enabled) {
+    throw new Error("SSO is not enabled. Set CORTEX_SSO_ENABLED=true and configure a provider.");
+  }
   // Check if user exists by email
   const existing = db.listUsers().find(u => u.email === ssoResult.email);
   if (existing) {

@@ -7,7 +7,7 @@ import { MemorySteward } from "./steward/index.js";
 import { WorkflowAdvisor } from "./advisor/index.js";
 import { PatternAnalyzer } from "./advisor/patterns.js";
 import { transcribeToVTT } from "./meeting/stt.js";
-import { ConnectorMarketplace, BUILT_IN_CONNECTORS } from "./connectors/marketplace.js";
+import { ConnectorRegistry, BUILT_IN_CONNECTORS } from "./connectors/registry.js";
 
 interface CliArgs {
   command: string;
@@ -858,12 +858,12 @@ async function handleAuditLog(
 }
 
 function handleConnectorsMarketplace(): void {
-  const marketplace = new ConnectorMarketplace();
+  const registry = new ConnectorRegistry();
   for (const manifest of BUILT_IN_CONNECTORS) {
-    marketplace.register(manifest);
+    registry.register(manifest);
   }
 
-  const all = marketplace.list();
+  const all = registry.list();
   const configured = all.filter(c => c.configured);
   const unconfigured = all.filter(c => !c.configured);
 

@@ -8,42 +8,15 @@ import type { Entity, ConnectorConfig, Organization, Workspace } from "../types.
 import { VectorStore } from "../search/vector-store.js";
 import { rrfFusion, buildEmbedText } from "../search/hybrid.js";
 import type { ACLContext } from "../acl/types.js";
-import { defaultACLPolicy } from "../acl/policy.js";
-import { getCDCEventBus } from "../pipeline/cdc.js";
+import * as entityOps from "./entity-ops.js";
+import type { ListEntitiesOptions, SearchEntitiesOptions, CountEntitiesOptions } from "./entity-ops.js";
+import * as synapseOps from "./synapse-ops.js";
 
 // Re-export Entity so consumers can import it from this module
 export type { Entity } from "../types.js";
 
 // ── Row types (raw SQLite rows before JSON parsing) ───────────────────────────
-
-interface EntityRow {
-  id: string;
-  entity_type: string;
-  project: string | null;
-  namespace: string;
-  title: string | null;
-  content: string;
-  tags: string;
-  keywords: string;
-  attributes: string;
-  source_system: string;
-  source_external_id: string | null;
-  source_url: string | null;
-  source_connector: string | null;
-  author: string | null;
-  visibility: string;
-  domain: string;
-  confidence: string;
-  created_at: string;
-  updated_at: string;
-  expires_at: string | null;
-  status: string;
-  superseded_by: string | null;
-  content_hash: string | null;
-  valid_from: string | null;
-  valid_to: string | null;
-  org_id: string | null;
-}
+// EntityRow is defined in entity-ops.ts; SynapseRow kept here for mergeEntities.
 
 interface OrganizationRow {
   id: string;
@@ -73,10 +46,7 @@ interface SynapseRow {
   last_potentiated: string;
 }
 
-interface CoactivationRow {
-  pair_key: string;
-  count: number;
-}
+// CoactivationRow moved to synapse-ops.ts
 
 interface ProjectRow {
   id: string;
@@ -189,134 +159,13 @@ export interface ConnectorStatus {
   errorMessage?: string;
 }
 
-// ── Filter / option types ─────────────────────────────────────────────────────
+// ── Filter / option types (defined in entity-ops.ts, re-exported here) ───────
 
-export interface ListEntitiesOptions {
-  project?: string;
-  entityType?: string | string[];
-  domain?: string;
-  namespace?: string;
-  status?: string;
-  /** ISO string: only include entries updated at or after this time */
-  since?: string;
-  /** ISO string: only include entries updated at or before this time */
-  until?: string;
-  sort?: "created_at" | "updated_at" | "recent" | "name" | "relevance";
-  order?: "asc" | "desc";
-  limit?: number;
-  offset?: number;
-  /** When true, only return entities without _enrichedAt attribute */
-  unenrichedOnly?: boolean;
-  /** When true, only return entities with non-empty keywords array */
-  hasKeywords?: boolean;
-  /** ACL context — when provided, results are filtered per policy. */
-  acl?: ACLContext;
-  /** When true, include entities with a non-null valid_to (temporally superseded). Default: false */
-  includeSuperseded?: boolean;
-  /** Tenant isolation: when set, only return entities with this org_id */
-  orgId?: string;
-}
-
-export interface SearchEntitiesOptions {
-  project?: string;
-  entityType?: string;
-  domain?: string;
-  namespace?: string;
-  limit?: number;
-  /** ACL context — when provided, results are filtered per policy. */
-  acl?: ACLContext;
-  /** When true, include entities with a non-null valid_to (temporally superseded). Default: false */
-  includeSuperseded?: boolean;
-  /** Tenant isolation: when set, only return entities with this org_id */
-  orgId?: string;
-}
-
-export interface CountEntitiesOptions {
-  project?: string;
-  entityType?: string;
-  domain?: string;
-  namespace?: string;
-  status?: string;
-}
+export type { ListEntitiesOptions, SearchEntitiesOptions, CountEntitiesOptions } from "./entity-ops.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-function rowToEntity(row: EntityRow): Entity {
-  return {
-    id: row.id,
-    entityType: row.entity_type as Entity["entityType"],
-    project: row.project ?? undefined,
-    namespace: row.namespace,
-    title: row.title ?? undefined,
-    content: row.content,
-    tags: JSON.parse(row.tags) as string[],
-    keywords: JSON.parse(row.keywords) as string[],
-    attributes: JSON.parse(row.attributes) as Record<string, unknown>,
-    source: {
-      system: row.source_system,
-      externalId: row.source_external_id ?? undefined,
-      url: row.source_url ?? undefined,
-      connector: row.source_connector ?? undefined,
-    },
-    author: row.author ?? undefined,
-    visibility: row.visibility as Entity["visibility"],
-    domain: row.domain as Entity["domain"],
-    confidence: row.confidence as Entity["confidence"],
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    expiresAt: row.expires_at ?? undefined,
-    status: row.status as Entity["status"],
-    supersededBy: row.superseded_by ?? undefined,
-    contentHash: row.content_hash ?? undefined,
-    validFrom: row.valid_from ?? undefined,
-    validTo: row.valid_to ?? undefined,
-    orgId: row.org_id ?? undefined,
-  };
-}
-
-function entityToRow(entity: Entity): Record<string, unknown> {
-  return {
-    id: entity.id,
-    entity_type: entity.entityType,
-    project: entity.project ?? null,
-    namespace: entity.namespace,
-    title: entity.title ?? null,
-    content: entity.content,
-    tags: JSON.stringify(entity.tags),
-    keywords: JSON.stringify(entity.keywords),
-    attributes: JSON.stringify(entity.attributes),
-    source_system: entity.source.system,
-    source_external_id: entity.source.externalId ?? null,
-    source_url: entity.source.url ?? null,
-    source_connector: entity.source.connector ?? null,
-    author: entity.author ?? null,
-    visibility: entity.visibility,
-    domain: entity.domain,
-    confidence: entity.confidence,
-    created_at: entity.createdAt,
-    updated_at: entity.updatedAt,
-    expires_at: entity.expiresAt ?? null,
-    status: entity.status,
-    superseded_by: entity.supersededBy ?? null,
-    content_hash: entity.contentHash ?? null,
-    valid_from: entity.validFrom ?? null,
-    valid_to: entity.validTo ?? null,
-    org_id: entity.orgId ?? null,
-  };
-}
-
-function rowToSynapse(row: SynapseRow): SynapseRecord {
-  return {
-    id: row.id,
-    source: row.source,
-    target: row.target,
-    axon: row.axon,
-    weight: row.weight,
-    metadata: JSON.parse(row.metadata) as Record<string, unknown>,
-    formedAt: row.formed_at,
-    lastPotentiated: row.last_potentiated,
-  };
-}
+// rowToEntity, entityToRow, computeContentHash → entity-ops.ts
+// rowToSynapse → synapse-ops.ts
 
 function rowToProject(row: ProjectRow): ProjectRecord {
   return {
@@ -376,12 +225,8 @@ function rowToConnector(row: ConnectorRow): ConnectorConfig {
   };
 }
 
-// ── Content hash helper ───────────────────────────────────────────────────────
-
-/** SHA-256 hex of content, truncated to first 16 chars. */
-export function computeContentHash(content: string): string {
-  return crypto.createHash("sha256").update(content).digest("hex").slice(0, 16);
-}
+// ── Content hash helper (defined in entity-ops.ts, re-exported here) ─────────
+export { computeContentHash } from "./entity-ops.js";
 
 // ── HiveDatabase ──────────────────────────────────────────────────────────────
 // Concrete synchronous implementation backed by better-sqlite3.
@@ -429,340 +274,40 @@ export class HiveDatabase {
     return this._vectorStore;
   }
 
-  // ── Entity methods ──────────────────────────────────────────────────────────
+  // ── Entity methods (delegated to entity-ops.ts) ────────────────────────────
 
   insertEntity(entity: Entity): void {
-    if (!entity.contentHash) {
-      entity.contentHash = computeContentHash(entity.content);
-    }
-    // Default valid_from to createdAt if not provided
-    if (!entity.validFrom) {
-      entity.validFrom = entity.createdAt;
-    }
-    const row = entityToRow(entity);
-    this.db.prepare(`
-      INSERT INTO entities (
-        id, entity_type, project, namespace, title, content,
-        tags, keywords, attributes,
-        source_system, source_external_id, source_url, source_connector,
-        author, visibility, domain, confidence,
-        created_at, updated_at, expires_at, status, superseded_by, content_hash,
-        valid_from, valid_to, org_id
-      ) VALUES (
-        @id, @entity_type, @project, @namespace, @title, @content,
-        @tags, @keywords, @attributes,
-        @source_system, @source_external_id, @source_url, @source_connector,
-        @author, @visibility, @domain, @confidence,
-        @created_at, @updated_at, @expires_at, @status, @superseded_by, @content_hash,
-        @valid_from, @valid_to, @org_id
-      )
-    `).run(row);
-    getCDCEventBus().emit({
-      type: "insert",
-      entityId: entity.id,
-      entityType: entity.entityType,
-      source: entity.source?.system ?? "unknown",
-      timestamp: new Date().toISOString(),
-    }).catch(() => { /* non-critical */ });
+    entityOps.insertEntity(this.db, entity);
   }
 
   updateEntity(id: string, updates: Partial<Omit<Entity, "id">>): { changed: boolean } {
-    const existing = this.getEntity(id);
-    if (!existing) throw new Error(`Entity not found: ${id}`);
-
-    const merged: Entity = { ...existing, ...updates, id };
-
-    // Compute new content hash and compare with existing
-    const newHash = computeContentHash(merged.content);
-    const changed = newHash !== existing.contentHash;
-    merged.contentHash = newHash;
-
-    const row = entityToRow(merged);
-
-    this.db.prepare(`
-      UPDATE entities SET
-        entity_type = @entity_type,
-        project = @project,
-        namespace = @namespace,
-        title = @title,
-        content = @content,
-        tags = @tags,
-        keywords = @keywords,
-        attributes = @attributes,
-        source_system = @source_system,
-        source_external_id = @source_external_id,
-        source_url = @source_url,
-        source_connector = @source_connector,
-        author = @author,
-        visibility = @visibility,
-        domain = @domain,
-        confidence = @confidence,
-        updated_at = @updated_at,
-        expires_at = @expires_at,
-        status = @status,
-        superseded_by = @superseded_by,
-        content_hash = @content_hash,
-        valid_from = @valid_from,
-        valid_to = @valid_to
-      WHERE id = @id
-    `).run(row);
-    getCDCEventBus().emit({
-      type: "update",
-      entityId: id,
-      entityType: merged.entityType,
-      source: merged.source?.system ?? "unknown",
-      timestamp: new Date().toISOString(),
-    }).catch(() => { /* non-critical */ });
-
-    return { changed };
+    return entityOps.updateEntity(this.db, id, updates);
   }
 
   deleteEntity(id: string): void {
-    this.db.prepare("DELETE FROM entities WHERE id = ?").run(id);
-    getCDCEventBus().emit({
-      type: "delete",
-      entityId: id,
-      entityType: "unknown",
-      source: "unknown",
-      timestamp: new Date().toISOString(),
-    }).catch(() => { /* non-critical */ });
+    entityOps.deleteEntity(this.db, id);
   }
 
   getEntity(id: string, acl?: ACLContext): Entity | null {
-    const row = this.db
-      .prepare("SELECT * FROM entities WHERE id = ?")
-      .get(id) as EntityRow | undefined;
-    if (!row) return null;
-    const entity = rowToEntity(row);
-    if (acl && !defaultACLPolicy.canRead({
-      visibility: entity.visibility,
-      ownerId: (entity.attributes?.ownerId as string | undefined),
-      requiredLabels: (entity.attributes?.requiredLabels as string[] | undefined),
-      aclMembers: (entity.attributes?.aclMembers as string[] | undefined),
-    }, acl)) {
-      return null;
-    }
-    return entity;
+    return entityOps.getEntity(this.db, id, acl);
   }
 
   listEntities(options: ListEntitiesOptions = {}): Entity[] {
-    const {
-      project,
-      entityType,
-      domain,
-      namespace,
-      status = "active",
-      since,
-      until,
-      sort = "updated_at",
-      order = "desc",
-      limit = 50,
-      offset = 0,
-      unenrichedOnly = false,
-      hasKeywords = false,
-      acl,
-      includeSuperseded = false,
-      orgId,
-    } = options;
-
-    const conditions: string[] = [];
-    const params: Record<string, unknown> = {};
-
-    if (project !== undefined) {
-      conditions.push("e.project = @project");
-      params.project = project;
-    }
-    if (entityType !== undefined) {
-      if (Array.isArray(entityType)) {
-        if (entityType.length > 0) {
-          const placeholders = entityType.map((_, i) => `@et${i}`);
-          conditions.push(`e.entity_type IN (${placeholders.join(", ")})`);
-          entityType.forEach((t, i) => { params[`et${i}`] = t; });
-        }
-      } else {
-        conditions.push("e.entity_type = @entityType");
-        params.entityType = entityType;
-      }
-    }
-    if (domain !== undefined) {
-      conditions.push("e.domain = @domain");
-      params.domain = domain;
-    }
-    if (namespace !== undefined) {
-      conditions.push("e.namespace = @namespace");
-      params.namespace = namespace;
-    }
-    if (status !== undefined) {
-      conditions.push("e.status = @status");
-      params.status = status;
-    }
-    if (since !== undefined) {
-      conditions.push("e.updated_at >= @since");
-      params.since = since;
-    }
-    if (until !== undefined) {
-      conditions.push("e.updated_at <= @until");
-      params.until = until;
-    }
-    if (unenrichedOnly) {
-      conditions.push("JSON_EXTRACT(e.attributes, '$._enrichedAt') IS NULL");
-    }
-    if (hasKeywords) {
-      conditions.push("e.keywords != '[]'");
-    }
-    if (!includeSuperseded) {
-      conditions.push("e.valid_to IS NULL");
-    }
-    if (acl) {
-      const { clause, params: aclParams } = defaultACLPolicy.sqlWhereClause(acl);
-      conditions.push(clause);
-      Object.assign(params, aclParams);
-    }
-    if (orgId !== undefined) {
-      conditions.push("e.org_id = @_acl_org_id");
-      params._acl_org_id = orgId;
-    }
-
-    const where =
-      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-
-    // Normalize sort to a valid SQL column
-    let sortCol: string;
-    if (sort === "created_at") {
-      sortCol = "e.created_at";
-    } else if (sort === "name") {
-      sortCol = "COALESCE(e.title, e.id)";
-    } else {
-      // "updated_at" | "recent" | "relevance" — default to updated_at
-      sortCol = "e.updated_at";
-    }
-    const sortDir = order === "asc" ? "ASC" : "DESC";
-
-    params.limit = limit;
-    params.offset = offset;
-
-    const rows = this.db
-      .prepare(
-        `SELECT e.* FROM entities e ${where} ORDER BY ${sortCol} ${sortDir} LIMIT @limit OFFSET @offset`,
-      )
-      .all(params) as EntityRow[];
-
-    return rows.map(rowToEntity);
+    return entityOps.listEntities(this.db, options);
   }
 
   searchEntities(query: string, options: SearchEntitiesOptions = {}): Entity[] {
-    const { project, entityType, domain, namespace, limit = 20, acl, includeSuperseded = false, orgId } = options;
-
-    const extraConditions: string[] = [];
-    const params: Record<string, unknown> = { query, limit };
-
-    if (project !== undefined) {
-      extraConditions.push("e.project = @project");
-      params.project = project;
-    }
-    if (entityType !== undefined) {
-      extraConditions.push("e.entity_type = @entityType");
-      params.entityType = entityType;
-    }
-    if (domain !== undefined) {
-      extraConditions.push("e.domain = @domain");
-      params.domain = domain;
-    }
-    if (namespace !== undefined) {
-      extraConditions.push("e.namespace = @namespace");
-      params.namespace = namespace;
-    }
-    if (!includeSuperseded) {
-      extraConditions.push("e.valid_to IS NULL");
-    }
-
-    if (acl) {
-      const { clause, params: aclParams } = defaultACLPolicy.sqlWhereClause(acl);
-      extraConditions.push(clause);
-      Object.assign(params, aclParams);
-    }
-    if (orgId !== undefined) {
-      extraConditions.push("e.org_id = @_acl_org_id");
-      params._acl_org_id = orgId;
-    }
-
-    const extraWhere =
-      extraConditions.length > 0
-        ? `AND ${extraConditions.join(" AND ")}`
-        : "";
-
-    const rows = this.db
-      .prepare(
-        `SELECT e.*
-         FROM entities_fts f
-         JOIN entities e ON f.rowid = e.rowid
-         WHERE entities_fts MATCH @query
-           AND e.status = 'active'
-           ${extraWhere}
-         ORDER BY bm25(entities_fts)
-         LIMIT @limit`,
-      )
-      .all(params) as EntityRow[];
-
-    return rows.map(rowToEntity);
+    return entityOps.searchEntities(this.db, query, options);
   }
 
   countEntities(options: CountEntitiesOptions = {}): number {
-    const { project, entityType, domain, namespace, status = "active" } = options;
-
-    const conditions: string[] = [];
-    const params: Record<string, unknown> = {};
-
-    if (project !== undefined) {
-      conditions.push("project = @project");
-      params.project = project;
-    }
-    if (entityType !== undefined) {
-      conditions.push("entity_type = @entityType");
-      params.entityType = entityType;
-    }
-    if (domain !== undefined) {
-      conditions.push("domain = @domain");
-      params.domain = domain;
-    }
-    if (namespace !== undefined) {
-      conditions.push("namespace = @namespace");
-      params.namespace = namespace;
-    }
-    if (status !== undefined) {
-      conditions.push("status = @status");
-      params.status = status;
-    }
-
-    const where =
-      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-
-    const result = this.db
-      .prepare(`SELECT COUNT(*) as cnt FROM entities ${where}`)
-      .get(params) as { cnt: number };
-
-    return result.cnt;
+    return entityOps.countEntities(this.db, options);
   }
 
-  // ── Synapse methods ─────────────────────────────────────────────────────────
+  // ── Synapse methods (delegated to synapse-ops.ts) ──────────────────────────
 
   insertSynapse(synapse: SynapseRecord): void {
-    this.db.prepare(`
-      INSERT INTO synapses (id, source, target, axon, weight, metadata, formed_at, last_potentiated)
-      VALUES (@id, @source, @target, @axon, @weight, @metadata, @formed_at, @last_potentiated)
-      ON CONFLICT(source, target, axon) DO UPDATE SET
-        weight = MIN(1.0, weight + 0.1),
-        last_potentiated = excluded.last_potentiated
-    `).run({
-      id: synapse.id,
-      source: synapse.source,
-      target: synapse.target,
-      axon: synapse.axon,
-      weight: synapse.weight,
-      metadata: JSON.stringify(synapse.metadata),
-      formed_at: synapse.formedAt,
-      last_potentiated: synapse.lastPotentiated,
-    });
+    synapseOps.insertSynapse(this.db, synapse);
   }
 
   getSynapsesByEntry(
@@ -770,89 +315,32 @@ export class HiveDatabase {
     direction: "outgoing" | "incoming" | "both" = "both",
     axonType?: string,
   ): SynapseRecord[] {
-    const params: Record<string, unknown> = { entryId };
-    const axonFilter = axonType ? "AND axon = @axonType" : "";
-    if (axonType) params.axonType = axonType;
-
-    let sql: string;
-    if (direction === "outgoing") {
-      sql = `SELECT * FROM synapses WHERE source = @entryId ${axonFilter}`;
-    } else if (direction === "incoming") {
-      sql = `SELECT * FROM synapses WHERE target = @entryId ${axonFilter}`;
-    } else {
-      sql = `SELECT * FROM synapses WHERE (source = @entryId OR target = @entryId) ${axonFilter}`;
-    }
-
-    const rows = this.db.prepare(sql).all(params) as SynapseRow[];
-    return rows.map(rowToSynapse);
+    return synapseOps.getSynapsesByEntry(this.db, entryId, direction, axonType);
   }
 
   getNeighborIds(
     entryId: string,
     direction: "outgoing" | "incoming" | "both" = "both",
   ): string[] {
-    const params: Record<string, unknown> = { entryId };
-    let sql: string;
-
-    if (direction === "outgoing") {
-      sql = "SELECT target AS neighbor FROM synapses WHERE source = @entryId";
-    } else if (direction === "incoming") {
-      sql = "SELECT source AS neighbor FROM synapses WHERE target = @entryId";
-    } else {
-      sql = `
-        SELECT target AS neighbor FROM synapses WHERE source = @entryId
-        UNION
-        SELECT source AS neighbor FROM synapses WHERE target = @entryId
-      `;
-    }
-
-    const rows = this.db.prepare(sql).all(params) as { neighbor: string }[];
-    return rows.map((r) => r.neighbor);
+    return synapseOps.getNeighborIds(this.db, entryId, direction);
   }
 
   updateSynapseWeight(id: string, weight: number): void {
-    this.db
-      .prepare("UPDATE synapses SET weight = ?, last_potentiated = ? WHERE id = ?")
-      .run(Math.min(1.0, Math.max(0.0, weight)), new Date().toISOString(), id);
+    synapseOps.updateSynapseWeight(this.db, id, weight);
   }
 
   applyDecay(factor = 0.95, pruneThreshold = 0.05): number {
-    const now = new Date().toISOString();
-    this.db
-      .prepare("UPDATE synapses SET weight = weight * ?, last_potentiated = ?")
-      .run(factor, now);
-    return this.db
-      .prepare("DELETE FROM synapses WHERE weight < ?")
-      .run(pruneThreshold).changes;
+    return synapseOps.applyDecay(this.db, factor, pruneThreshold);
   }
 
   // ── Coactivation methods ────────────────────────────────────────────────────
 
   recordCoactivation(entryIds: string[]): void {
-    const stmt = this.db.prepare(`
-      INSERT INTO coactivations (pair_key, count)
-      VALUES (?, 1)
-      ON CONFLICT(pair_key) DO UPDATE SET count = count + 1
-    `);
-
-    this.db.transaction((ids: string[]) => {
-      for (let i = 0; i < ids.length; i++) {
-        for (let j = i + 1; j < ids.length; j++) {
-          const a = ids[i] < ids[j] ? ids[i] : ids[j];
-          const b = ids[i] < ids[j] ? ids[j] : ids[i];
-          stmt.run(`${a}:${b}`);
-        }
-      }
-    })(entryIds);
+    synapseOps.recordCoactivation(this.db, entryIds);
   }
 
   getCoactivationAboveThreshold(threshold: number): { pairKey: string; count: number }[] {
-    const rows = this.db
-      .prepare(
-        "SELECT pair_key, count FROM coactivations WHERE count >= ? ORDER BY count DESC",
-      )
-      .all(threshold) as CoactivationRow[];
-    return rows.map((r) => ({ pairKey: r.pair_key, count: r.count }));
+    return synapseOps.getCoactivationAboveThreshold(this.db, threshold);
   }
 
   // ── Project methods ─────────────────────────────────────────────────────────
@@ -1030,48 +518,29 @@ export class HiveDatabase {
 
   /** Find entity by source system + external ID (direct SQL, not FTS5). */
   getByExternalId(system: string, externalId: string): Entity | null {
-    const row = this.db
-      .prepare(
-        "SELECT * FROM entities WHERE source_system = ? AND source_external_id = ? LIMIT 1",
-      )
-      .get(system, externalId) as EntityRow | undefined;
-    return row ? rowToEntity(row) : null;
+    return entityOps.getByExternalId(this.db, system, externalId);
   }
 
   // ── Enrichment convenience methods ──────────────────────────────────────────
 
   /** Merge attributes into an existing entity (does not replace, only adds/overwrites keys). */
   updateEntityAttributes(id: string, attributes: Record<string, unknown>): void {
-    const existing = this.getEntity(id);
-    if (!existing) throw new Error(`Entity not found: ${id}`);
-    this.updateEntity(id, {
-      attributes: { ...existing.attributes, ...attributes },
-      updatedAt: new Date().toISOString(),
-    });
+    entityOps.updateEntityAttributes(this.db, id, attributes);
   }
 
   /** Append unique tags to an existing entity. */
   addEntityTags(id: string, tags: string[]): void {
-    const existing = this.getEntity(id);
-    if (!existing) throw new Error(`Entity not found: ${id}`);
-    const merged = [...new Set([...existing.tags, ...tags])];
-    this.updateEntity(id, { tags: merged, updatedAt: new Date().toISOString() });
+    entityOps.addEntityTags(this.db, id, tags);
   }
 
   /** Append unique keywords to an existing entity. */
   addEntityKeywords(id: string, keywords: string[]): void {
-    const existing = this.getEntity(id);
-    if (!existing) throw new Error(`Entity not found: ${id}`);
-    const merged = [...new Set([...existing.keywords, ...keywords])];
-    this.updateEntity(id, { keywords: merged, updatedAt: new Date().toISOString() });
+    entityOps.addEntityKeywords(this.db, id, keywords);
   }
 
   /** Get all synapses for a given axon type. */
   getSynapsesByAxon(axon: string): SynapseRecord[] {
-    const rows = this.db
-      .prepare("SELECT * FROM synapses WHERE axon = ?")
-      .all(axon) as SynapseRow[];
-    return rows.map(rowToSynapse);
+    return synapseOps.getSynapsesByAxon(this.db, axon);
   }
 
   /**
@@ -1097,25 +566,7 @@ export class HiveDatabase {
     weight: number;
     metadata?: Record<string, string>;
   }): void {
-    const now = new Date().toISOString();
-    const id = crypto.randomUUID();
-    this.db.prepare(`
-      INSERT INTO synapses (id, source, target, axon, weight, metadata, formed_at, last_potentiated)
-      VALUES (@id, @source, @target, @axon, @weight, @metadata, @formed_at, @last_potentiated)
-      ON CONFLICT(source, target, axon) DO UPDATE SET
-        weight = excluded.weight,
-        metadata = excluded.metadata,
-        last_potentiated = excluded.last_potentiated
-    `).run({
-      id,
-      source: opts.sourceId,
-      target: opts.targetId,
-      axon: opts.axon,
-      weight: Math.min(1.0, Math.max(0.0, opts.weight)),
-      metadata: JSON.stringify(opts.metadata ?? {}),
-      formed_at: now,
-      last_potentiated: now,
-    });
+    synapseOps.upsertSynapse(this.db, opts);
   }
 
   /** Create an entity from a draft shape, returning the generated id. */
@@ -1130,32 +581,7 @@ export class HiveDatabase {
     domain: string;
     confidence: string;
   }): string {
-    const id = crypto.randomUUID();
-    const now = new Date().toISOString();
-    const entity: Entity = {
-      id,
-      entityType: draft.entityType as Entity["entityType"],
-      project: draft.project,
-      namespace: "local",
-      title: draft.title,
-      content: draft.content,
-      tags: draft.tags,
-      keywords: [],
-      attributes: draft.attributes,
-      source: {
-        system: draft.source.system,
-        externalId: draft.source.externalId,
-        connector: draft.source.connector,
-      },
-      visibility: "personal",
-      domain: draft.domain as Entity["domain"],
-      confidence: draft.confidence as Entity["confidence"],
-      createdAt: now,
-      updatedAt: now,
-      status: "active",
-    };
-    this.insertEntity(entity);
-    return id;
+    return entityOps.upsertEntity(this.db, draft);
   }
 
   // ── Entity alias methods ────────────────────────────────────────────────────
@@ -1286,59 +712,17 @@ export class HiveDatabase {
 
   /** Find person entities matching by email, excluding a source system. */
   findPersonsByEmail(email: string, excludeSystem?: string): Entity[] {
-    const rows = excludeSystem
-      ? this.db.prepare(`
-          SELECT * FROM entities
-          WHERE entity_type = 'person'
-            AND JSON_EXTRACT(attributes, '$.email') = ?
-            AND source_system != ?
-            AND status = 'active'
-        `).all(email, excludeSystem) as EntityRow[]
-      : this.db.prepare(`
-          SELECT * FROM entities
-          WHERE entity_type = 'person'
-            AND JSON_EXTRACT(attributes, '$.email') = ?
-            AND status = 'active'
-        `).all(email) as EntityRow[];
-    return rows.map(rowToEntity);
+    return entityOps.findPersonsByEmail(this.db, email, excludeSystem);
   }
 
   /** Find person entities matching by normalized name, excluding a source system. */
   findPersonsByNormalizedName(name: string, excludeSystem?: string): Entity[] {
-    const rows = excludeSystem
-      ? this.db.prepare(`
-          SELECT * FROM entities
-          WHERE entity_type = 'person'
-            AND LOWER(TRIM(title)) = ?
-            AND source_system != ?
-            AND status = 'active'
-        `).all(name, excludeSystem) as EntityRow[]
-      : this.db.prepare(`
-          SELECT * FROM entities
-          WHERE entity_type = 'person'
-            AND LOWER(TRIM(title)) = ?
-            AND status = 'active'
-        `).all(name) as EntityRow[];
-    return rows.map(rowToEntity);
+    return entityOps.findPersonsByNormalizedName(this.db, name, excludeSystem);
   }
 
   /** Find person entities matching by handle or username attribute, excluding a source system. */
   findPersonsByHandle(handle: string, excludeSystem?: string): Entity[] {
-    const rows = excludeSystem
-      ? this.db.prepare(`
-          SELECT * FROM entities
-          WHERE entity_type = 'person'
-            AND (JSON_EXTRACT(attributes, '$.handle') = ? OR JSON_EXTRACT(attributes, '$.username') = ?)
-            AND source_system != ?
-            AND status = 'active'
-        `).all(handle, handle, excludeSystem) as EntityRow[]
-      : this.db.prepare(`
-          SELECT * FROM entities
-          WHERE entity_type = 'person'
-            AND (JSON_EXTRACT(attributes, '$.handle') = ? OR JSON_EXTRACT(attributes, '$.username') = ?)
-            AND status = 'active'
-        `).all(handle, handle) as EntityRow[];
-    return rows.map(rowToEntity);
+    return entityOps.findPersonsByHandle(this.db, handle, excludeSystem);
   }
 
   // ── User methods ────────────────────────────────────────────────────────────
