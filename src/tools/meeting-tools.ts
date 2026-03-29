@@ -10,17 +10,15 @@ export function registerMeetingTools(
 ): void {
   safeTool(
     "meeting_process",
-    "Process a meeting transcript to extract decisions, action items, and create structured meeting notes",
+    "Process a meeting transcript to extract decisions, action items, and create structured meeting notes. Returns markdown — caller handles posting.",
     {
       transcriptPath: z.string(),
       title: z.string().optional(),
       date: z.string().optional(),
       attendees: z.array(z.string()).optional(),
       calendarEventId: z.string().optional(),
-      slackWebhook: z.string().optional(),
-      notionParentPageId: z.string().optional(),
     },
-    async ({ transcriptPath, title, date, attendees, calendarEventId, slackWebhook, notionParentPageId }) => {
+    async ({ transcriptPath, title, date, attendees, calendarEventId }) => {
       if (!existsSync(transcriptPath as string)) {
         throw new Error(`Transcript file not found: ${transcriptPath}`);
       }
@@ -36,8 +34,6 @@ export function registerMeetingTools(
         date: date as string | undefined,
         attendees: attendees as string[] | undefined,
         calendarEventId: calendarEventId as string | undefined,
-        slackWebhook: slackWebhook as string | undefined,
-        notionParentPageId: notionParentPageId as string | undefined,
       });
 
       return {
@@ -50,8 +46,6 @@ export function registerMeetingTools(
               decisionsCreated: result.decisionsCreated,
               actionsCreated: result.actionsCreated,
               markdown: result.markdownOutput,
-              slackPosted: result.slackPosted,
-              notionPageUrl: result.notionPageUrl,
             }),
           },
         ],

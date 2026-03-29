@@ -6,7 +6,7 @@ import { MeetingAgent } from "./meeting/agent.js";
 import { MemorySteward } from "./steward/index.js";
 import { WorkflowAdvisor } from "./advisor/index.js";
 import { PatternAnalyzer } from "./advisor/patterns.js";
-import { transcribeToVTT } from "./meeting/stt.js";
+// transcribeToVTT extracted to jarvis — transcribe CLI command disabled
 import { ConnectorRegistry, BUILT_IN_CONNECTORS } from "./connectors/registry.js";
 
 interface CliArgs {
@@ -144,7 +144,8 @@ export async function handleCli(
       await handleMeeting(store, initStore, parsed);
       break;
     case "transcribe":
-      await handleTranscribe(store, initStore, parsed);
+      console.error("The transcribe command has been moved to jarvis. Use jarvis transcribe instead.");
+      process.exit(1);
       break;
     case "audit":
       await handleAudit(store, initStore);
@@ -499,78 +500,7 @@ async function handlePatterns(
   console.log(report.markdownOutput);
 }
 
-async function handleTranscribe(
-  store: CortexStore,
-  initStore: () => Promise<void>,
-  args: CliArgs,
-): Promise<void> {
-  if (!args.content) {
-    console.error("Usage: hive-memory transcribe <audio/video file> [--title <title>] [--output <file>]");
-    console.error("\nSupported: mp4, mkv, webm, mov, mp3, wav, m4a, ogg, flac");
-    console.error("\nFull pipeline: audio → Whisper STT → meeting notes → enrichment");
-    process.exit(1);
-  }
-
-  // Step 1: STT
-  console.error("[pipeline] Step 1/4: Transcribing audio...");
-  const sttResult = await transcribeToVTT({
-    inputPath: args.content,
-    model: process.env.WHISPER_MODEL ?? "base",
-    language: process.env.WHISPER_LANGUAGE,
-  });
-  console.error(`[pipeline] Transcript: ${sttResult.vttPath} (${sttResult.durationSeconds}s, ${sttResult.engine})`);
-
-  // Step 2: Process with MeetingAgent
-  console.error("[pipeline] Step 2/4: Processing meeting notes...");
-  await initStore();
-  const agent = new MeetingAgent(store.database, store.enrichmentEngine);
-  const result = await agent.process({
-    transcriptPath: sttResult.vttPath,
-    title: args.query,
-    date: args.since,
-  });
-
-  // Step 3: Share (if configured)
-  console.error("[pipeline] Step 3/4: Sharing...");
-  const slackWebhook = process.env.MEETING_SLACK_WEBHOOK;
-  const notionParent = process.env.MEETING_NOTION_PARENT;
-  if (slackWebhook) {
-    try {
-      const { postToSlack } = await import("./meeting/output.js");
-      await postToSlack({ webhookUrl: slackWebhook, markdown: result.markdownOutput });
-      console.error("[pipeline] Posted to Slack ✓");
-    } catch (err) {
-      console.error(`[pipeline] Slack post failed: ${err}`);
-    }
-  }
-  if (notionParent && process.env.NOTION_TOKEN) {
-    try {
-      const { postToNotion } = await import("./meeting/output.js");
-      const url = await postToNotion({
-        token: process.env.NOTION_TOKEN,
-        parentPageId: notionParent,
-        title: args.query ?? "Meeting Notes",
-        markdown: result.markdownOutput,
-      });
-      console.error(`[pipeline] Created Notion page: ${url}`);
-    } catch (err) {
-      console.error(`[pipeline] Notion post failed: ${err}`);
-    }
-  }
-
-  // Step 4: Output
-  console.error("[pipeline] Step 4/4: Done!");
-  console.error(`  Decisions: ${result.decisionsCreated}`);
-  console.error(`  Actions: ${result.actionsCreated}`);
-  console.error(`  Speakers: ${result.speakers.join(", ")}`);
-
-  if (args.output) {
-    await writeFile(args.output, result.markdownOutput, "utf-8");
-    console.log(`Meeting notes written to ${args.output}`);
-  } else {
-    console.log(result.markdownOutput);
-  }
-}
+// handleTranscribe extracted to jarvis — audio processing is agent-layer behavior
 
 async function handleConnect(args: CliArgs): Promise<void> {
   const { detectTool, generateMcpConfig, getConfigPath } = await import("./gateway/config-templates.js");

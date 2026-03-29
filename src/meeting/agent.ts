@@ -3,8 +3,6 @@ import type { HiveDatabase } from "../db/database.js";
 import type { EnrichmentEngine } from "../enrichment/engine.js";
 import { parseTranscript, parseTranscriptContent } from "./transcript-parser.js";
 import type { ParsedTranscript } from "./transcript-parser.js";
-import { postToSlack, postToNotion } from "./output.js";
-
 export interface MeetingAgentOptions {
   transcriptPath?: string;
   transcriptContent?: string;
@@ -12,8 +10,6 @@ export interface MeetingAgentOptions {
   date?: string;
   attendees?: string[];
   calendarEventId?: string;
-  slackWebhook?: string;
-  notionParentPageId?: string;
 }
 
 export interface PreBriefingOptions {
@@ -39,8 +35,6 @@ export interface MeetingAgentResult {
   decisionsCreated: number;
   actionsCreated: number;
   markdownOutput: string;
-  slackPosted?: boolean;
-  notionPageUrl?: string;
 }
 
 export class MeetingAgent {
@@ -81,15 +75,12 @@ export class MeetingAgent {
       const actions = this.db.listEntities({ entityType: "task" }).filter(
         (e) => e.attributes?.extractedFrom === existing.id,
       );
-      const existingTitle = existing.title ?? opts.title ?? "Meeting Notes";
-      const existingSharing = await this.shareOutput(markdown, existingTitle, opts);
       return {
         meetingEntityId: existing.id,
         speakers: parsed.speakers,
         decisionsCreated: decisions.length,
         actionsCreated: actions.length,
         markdownOutput: markdown,
-        ...existingSharing,
       };
     }
 
@@ -198,55 +189,13 @@ export class MeetingAgent {
     // 9. Render markdown
     const markdownOutput = this.renderMarkdown(meetingEntityId, parsed, opts);
 
-    // 10. Optional output sharing
-    const sharing = await this.shareOutput(markdownOutput, title, opts);
-
     return {
       meetingEntityId,
       speakers: allSpeakers,
       decisionsCreated: allDecisions.length,
       actionsCreated: allActions.length,
       markdownOutput,
-      ...sharing,
     };
-  }
-
-  private async shareOutput(
-    markdown: string,
-    title: string,
-    opts: MeetingAgentOptions,
-  ): Promise<{ slackPosted?: boolean; notionPageUrl?: string }> {
-    const result: { slackPosted?: boolean; notionPageUrl?: string } = {};
-
-    if (opts.slackWebhook) {
-      try {
-        await postToSlack({ webhookUrl: opts.slackWebhook, markdown });
-        result.slackPosted = true;
-      } catch (err) {
-        console.error("[meeting] Slack posting failed:", err);
-        result.slackPosted = false;
-      }
-    }
-
-    if (opts.notionParentPageId) {
-      const notionToken = process.env.NOTION_TOKEN;
-      if (!notionToken) {
-        console.error("[meeting] NOTION_TOKEN not set, skipping Notion post");
-      } else {
-        try {
-          result.notionPageUrl = await postToNotion({
-            token: notionToken,
-            parentPageId: opts.notionParentPageId,
-            title,
-            markdown,
-          });
-        } catch (err) {
-          console.error("[meeting] Notion posting failed:", err);
-        }
-      }
-    }
-
-    return result;
   }
 
   /**

@@ -126,39 +126,4 @@ describe("RecallConnector", () => {
   });
 });
 
-describe("parseIntentRegex — join_meeting", () => {
-  let parseIntentRegex: typeof import("../src/bot/intent-parser.js").parseIntentRegex;
-
-  beforeEach(async () => {
-    ({ parseIntentRegex } = await import("../src/bot/intent-parser.js"));
-  });
-
-  it("detects join intent with Google Meet URL", () => {
-    const result = parseIntentRegex("<@U1> join https://meet.google.com/abc-defg-hij");
-    expect(result.intent).toBe("join_meeting");
-    expect(result.meetingUrl).toBe("https://meet.google.com/abc-defg-hij");
-  });
-
-  it("detects join intent with Zoom URL", () => {
-    const result = parseIntentRegex("<@U1> https://zoom.us/j/123456789");
-    expect(result.intent).toBe("join_meeting");
-    expect(result.meetingUrl).toBe("https://zoom.us/j/123456789");
-  });
-
-  it("detects join intent with Teams URL", () => {
-    const result = parseIntentRegex("<@U1> record https://teams.microsoft.com/l/meetup-join/abc");
-    expect(result.intent).toBe("join_meeting");
-    expect(result.meetingUrl).toContain("teams.microsoft.com");
-  });
-
-  it("detects Korean join intent with URL", () => {
-    const result = parseIntentRegex("<@U1> 참여 https://meet.google.com/xyz");
-    expect(result.intent).toBe("join_meeting");
-    expect(result.meetingUrl).toBe("https://meet.google.com/xyz");
-  });
-
-  it("does not trigger join without a meeting URL", () => {
-    const result = parseIntentRegex("<@U1> join the discussion about Redis");
-    expect(result.intent).not.toBe("join_meeting");
-  });
-});
+// parseIntentRegex tests moved to jarvis/tests/bumble-bee.test.ts

@@ -472,7 +472,6 @@ export async function handleRecallWebhook(
         title,
         date: bot.created_at.slice(0, 10),
         attendees: speakers,
-        slackWebhook: process.env["MEETING_SLACK_WEBHOOK"],
       });
 
       console.error(
@@ -493,114 +492,5 @@ export async function handleRecallWebhook(
 
 // ── Calendar auto-join ───────────────────────────────────────────────────────
 
-/**
- * Scan upcoming calendar events and schedule Recall bots for meetings
- * that have a video conference link (Google Meet, Zoom, Teams).
- */
-export async function scheduleBotsForUpcomingMeetings(
-  db: HiveDatabase,
-): Promise<{ scheduled: number; skipped: number }> {
-  const client = new RecallClient();
-
-  // Find upcoming meeting entities from calendar connector
-  const now = new Date();
-  const upcoming = db.listEntities({
-    entityType: "event",
-    status: "active",
-    since: now.toISOString(),
-    limit: 20,
-  });
-
-  let scheduled = 0;
-  let skipped = 0;
-
-  const meetUrlPattern = /https?:\/\/(?:meet\.google\.com|zoom\.us|teams\.microsoft\.com)\/\S+/i;
-
-  for (const event of upcoming) {
-    const content = `${event.title ?? ""} ${event.content}`;
-    const urlMatch = content.match(meetUrlPattern);
-    if (!urlMatch) {
-      skipped++;
-      continue;
-    }
-
-    const meetingUrl = urlMatch[0];
-    const externalId = `recall:scheduled:${event.id}`;
-
-    // Check if already scheduled
-    const existing = db.getByExternalId("recall", externalId);
-    if (existing) {
-      skipped++;
-      continue;
-    }
-
-    // Schedule bot to join 1 minute before event start
-    const eventDate = event.attributes?.startTime as string | undefined;
-    let joinAt: string | undefined;
-    if (eventDate) {
-      const joinTime = new Date(eventDate);
-      joinTime.setMinutes(joinTime.getMinutes() - 1);
-      // Only schedule if at least 10 minutes in the future (Recall requirement)
-      if (joinTime.getTime() - Date.now() < 10 * 60 * 1000) {
-        skipped++;
-        continue;
-      }
-      joinAt = joinTime.toISOString();
-    }
-
-    try {
-      const bot = await client.createBot({
-        meetingUrl,
-        joinAt,
-        metadata: {
-          title: event.title ?? "Scheduled Meeting",
-          calendarEventId: event.id,
-        },
-      });
-
-      console.error(`[recall] Scheduled bot ${bot.id} for "${event.title}" at ${joinAt ?? "now"}`);
-      scheduled++;
-    } catch (err) {
-      console.error(`[recall] Failed to schedule bot for event ${event.id}:`, err);
-    }
-  }
-
-  return { scheduled, skipped };
-}
-
-// ── Slack bot helpers ────────────────────────────────────────────────────────
-
-/**
- * Create a Recall bot to join a meeting URL.
- * Called from the Bumble Bee Slack bot when a user says "@bot join <url>".
- */
-export async function joinMeeting(
-  meetingUrl: string,
-  title?: string,
-): Promise<{ botId: string; status: string }> {
-  const client = new RecallClient();
-  const bot = await client.createBot({
-    meetingUrl,
-    metadata: { title: title ?? "Meeting" },
-  });
-
-  console.error(`[recall] Bot ${bot.id} joining ${meetingUrl}`);
-  return { botId: bot.id, status: bot.status };
-}
-
-/**
- * Get the current status of a Recall bot.
- */
-export async function getBotStatus(botId: string): Promise<{
-  status: string;
-  meetingUrl: string;
-  hasTranscript: boolean;
-}> {
-  const client = new RecallClient();
-  const bot = await client.getBot(botId);
-  return {
-    status: bot.status,
-    meetingUrl: bot.meeting_url,
-    hasTranscript: Boolean(bot.recordings?.[0]?.media_shortcuts?.transcript),
-  };
-}
+// scheduleBotsForUpcomingMeetings, joinMeeting, getBotStatus
+// extracted to jarvis — these are agent-layer orchestration
