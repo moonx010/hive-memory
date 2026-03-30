@@ -232,15 +232,18 @@ export interface CoactivationIndex {
 export type EntityType =
   | "memory"
   | "reference"
-  | "decision" // Phase 1
+  | "decision"
   | "person"
-  | "document" // Phase 2
+  | "document"
   | "conversation"
   | "message"
   | "meeting"
   | "task"
   | "event"
-  | "snippet"; // Phase 3
+  | "snippet"
+  // Domain-extensible: any string is valid at runtime.
+  // Register custom types via domain_schemas table for validation.
+  | (string & {});
 
 /**
  * Extended axon type for v3 (adds relationship types for rich entity graph).
@@ -263,7 +266,9 @@ export type AxonTypeV3 =
   | "supersedes"
   | "implements"
   | "belongs_to"
-  | "related";
+  | "related"
+  // Domain-extensible: any string is valid at runtime.
+  | (string & {});
 
 export type DomainType =
   | "code"

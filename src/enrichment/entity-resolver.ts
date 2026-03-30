@@ -1,6 +1,11 @@
 import type { HiveDatabase, EntityAlias } from "../db/database.js";
 import type { Entity } from "../types.js";
-import type { LLMProvider } from "./types.js";
+import type {
+  EnrichmentContext,
+  EnrichmentProvider,
+  EnrichmentResult,
+  LLMProvider,
+} from "./types.js";
 
 export interface ResolutionCandidate {
   entity: Entity;
@@ -133,6 +138,49 @@ Answer with JSON: { "same_person": true/false, "reasoning": "one sentence" }`;
 
   getAliases(entityId: string): EntityAlias[] {
     return this.db.getAliases(entityId);
+  }
+}
+
+/**
+ * EnrichmentProvider wrapper for EntityResolver.
+ * Runs in the "resolve" stage, operates only on person entities.
+ */
+export class EntityResolverProvider implements EnrichmentProvider {
+  readonly id = "entity-resolver";
+  readonly name = "EntityResolver";
+  readonly applicableTo: ["*"] = ["*"];
+  readonly priority = 400;
+  readonly stage = "resolve" as const;
+
+  private resolver: EntityResolver;
+
+  constructor(db: HiveDatabase, private llm?: LLMProvider) {
+    this.resolver = new EntityResolver(db);
+  }
+
+  shouldEnrich(entity: Entity): boolean {
+    return entity.entityType === "person";
+  }
+
+  async enrich(entity: Entity, _ctx: EnrichmentContext): Promise<EnrichmentResult> {
+    const candidates = this.resolver.findCandidates(entity);
+    const aliases: EnrichmentResult["aliases"] = [];
+
+    for (const candidate of candidates) {
+      if (candidate.confidence === "confirmed" && this.llm) {
+        const isSame = await this.resolver.resolveWithLLM(entity, candidate.entity, this.llm);
+        if (!isSame) continue;
+      }
+
+      aliases.push({
+        canonicalId: candidate.entity.id,
+        aliasType: candidate.matchType,
+        aliasValue: entity.source.externalId ?? entity.id,
+        confidence: candidate.confidence,
+      });
+    }
+
+    return { aliases };
   }
 }
 

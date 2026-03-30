@@ -8,6 +8,7 @@
  */
 
 import type { ConnectorPlugin, RawDocument, EntityDraft } from "./types.js";
+import type { HiveDatabase } from "../db/database.js";
 import { deriveACLFromSource } from "../acl/source-inherit.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -162,6 +163,7 @@ export class SlackConnector implements ConnectorPlugin {
   private readonly token: string;
   private readonly channels: string[];
   private readonly _channelInfoCache = new Map<string, { isPrivate: boolean; isDM: boolean; isMPIM: boolean; members?: string[] }>();
+  private _syncedMsgExternalIds: Array<{ msgExternalId: string; authorUserId: string }> = [];
 
   constructor() {
     this.token = process.env.SLACK_TOKEN ?? "";
@@ -206,6 +208,7 @@ export class SlackConnector implements ConnectorPlugin {
 
   private async *_syncChannels(oldest?: string): AsyncGenerator<RawDocument> {
     this.cursor = new Date().toISOString();
+    this._syncedMsgExternalIds = [];
 
     for (const channelId of this.channels) {
       yield* this._syncChannel(channelId, oldest);
@@ -301,6 +304,17 @@ export class SlackConnector implements ConnectorPlugin {
           );
           threadContent = `${msg.text}\n\n--- Thread replies ---\n${summary}`;
           replyAuthors = authors;
+        }
+
+        // Track for postSync synapse creation
+        if (msg.user) {
+          const allAuthors = [msg.user, ...replyAuthors];
+          for (const userId of [...new Set(allAuthors)]) {
+            this._syncedMsgExternalIds.push({
+              msgExternalId: `slack:msg:${channelId}:${msg.ts}`,
+              authorUserId: userId,
+            });
+          }
         }
 
         yield {
@@ -496,5 +510,21 @@ export class SlackConnector implements ConnectorPlugin {
         confidence: "confirmed",
       },
     ];
+  }
+
+  postSync(db: HiveDatabase, entityMap: Map<string, string>): void {
+    // Create "participated" synapses: person → conversation
+    for (const { msgExternalId, authorUserId } of this._syncedMsgExternalIds) {
+      const convId = entityMap.get(msgExternalId);
+      const personId = entityMap.get(`slack:person:${authorUserId}`);
+      if (!convId || !personId) continue;
+
+      db.upsertSynapse({
+        sourceId: personId,
+        targetId: convId,
+        axon: "participated",
+        weight: 0.8,
+      });
+    }
   }
 }

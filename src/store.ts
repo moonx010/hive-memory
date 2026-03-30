@@ -42,9 +42,10 @@ import { EnrichmentEngine } from "./enrichment/engine.js";
 import { ClassifyProvider } from "./enrichment/providers/classify.js";
 import { LLMEnrichProvider } from "./enrichment/providers/llm-enrich.js";
 import { DecisionExtractorProvider } from "./enrichment/providers/decision-extractor.js";
+import { TopicStitcher } from "./enrichment/providers/topic-stitch.js";
 import { createLLMProvider } from "./enrichment/llm/index.js";
 import type { BatchFilter, BatchResult, EnrichmentResult, EnrichmentStage } from "./enrichment/types.js";
-import { EntityResolver } from "./enrichment/entity-resolver.js";
+import { EntityResolver, EntityResolverProvider } from "./enrichment/entity-resolver.js";
 
 // Re-export for backwards compatibility
 export { validateId } from "./store/io.js";
@@ -261,6 +262,8 @@ export class CortexStore {
       if (enrichMode !== "off") {
         this._enrichmentEngine.register(new DecisionExtractorProvider());
         this._enrichmentEngine.register(new ClassifyProvider());
+        this._enrichmentEngine.register(new TopicStitcher(db, llm ?? undefined));
+        this._enrichmentEngine.register(new EntityResolverProvider(db, llm ?? undefined));
       }
       if (enrichMode === "llm" && llm) {
         this._enrichmentEngine.register(new LLMEnrichProvider());
