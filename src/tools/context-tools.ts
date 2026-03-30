@@ -4,6 +4,8 @@ import type { SafeToolFn } from "./index.js";
 import type { EntityType } from "../types.js";
 import type { EnrichmentStage } from "../enrichment/types.js";
 import { resolveACL } from "../acl/resolver.js";
+import type { Entity } from "../types.js";
+import crypto from "node:crypto";
 
 export function registerContextTools(
   safeTool: SafeToolFn,
@@ -131,6 +133,77 @@ export function registerContextTools(
       }
 
       throw new Error(`Unknown action: ${action}`);
+    },
+  );
+
+  // ── context_store: persist conversation context (upsert by source+thread_id) ──
+
+  safeTool(
+    "context_store",
+    "Store or update a conversation context summary. Upserts by (source, thread_id). Indexed for memory_recall search. Use for: Slack threads, GitHub PR discussions, CLI sessions, any multi-turn conversation worth remembering.",
+    {
+      source: z.string().describe("Platform: 'slack', 'github', 'discord', 'cli'"),
+      thread_id: z.string().describe("Platform-specific ID (e.g., 'C123:1234.5678' for Slack)"),
+      project: z.string().optional().describe("Associated project name"),
+      summary: z.string().describe("Compressed context summary"),
+      participants: z.array(z.string()).optional().describe("Who participated"),
+      key_entities: z.array(z.string()).optional().describe("URLs, paths, project names mentioned"),
+      message_count: z.number().optional().describe("Number of messages covered"),
+    },
+    async ({ source, thread_id, project, summary, participants, key_entities, message_count }) => {
+      const externalId = `context:${source}:${thread_id}`;
+      const existing = store.database.getByExternalId("context_store", externalId);
+      const now = new Date().toISOString();
+
+      if (existing) {
+        store.database.updateEntity(existing.id, {
+          content: summary as string,
+          attributes: {
+            ...existing.attributes,
+            source: source as string,
+            threadId: thread_id as string,
+            participants: participants as string[] | undefined,
+            keyEntities: key_entities as string[] | undefined,
+            messageCount: message_count as number | undefined,
+            updatedAt: now,
+          },
+          tags: (key_entities as string[] | undefined) ?? existing.tags,
+          updatedAt: now,
+        });
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ id: existing.id, status: "updated" }) }],
+        };
+      }
+
+      const id = crypto.randomUUID();
+      const entity: Entity = {
+        id,
+        entityType: "conversation",
+        project: (project as string | undefined) ?? undefined,
+        namespace: "local",
+        title: `[${source}] Thread ${thread_id}`,
+        content: summary as string,
+        tags: (key_entities as string[] | undefined) ?? [],
+        keywords: [],
+        attributes: {
+          source: source as string,
+          threadId: thread_id as string,
+          participants: participants as string[] | undefined,
+          keyEntities: key_entities as string[] | undefined,
+          messageCount: message_count as number | undefined,
+        },
+        source: { system: "context_store", externalId },
+        visibility: "personal",
+        domain: "conversations",
+        confidence: "confirmed",
+        createdAt: now,
+        updatedAt: now,
+        status: "active",
+      };
+      store.database.insertEntity(entity);
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ id, status: "created" }) }],
+      };
     },
   );
 }
