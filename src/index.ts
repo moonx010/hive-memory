@@ -13,7 +13,6 @@ import { CortexStore } from "./store.js";
 import { registerTools } from "./tools.js";
 import { handleCli } from "./cli.js";
 import { resolveAuth } from "./auth.js";
-import { verifySlackSignature, handleSlackEvent } from "./bot/slack-bot.js";
 import { recordRequest, recordSync, getMetrics } from "./observability/metrics.js";
 import { checkRateLimit } from "./observability/rate-limit.js";
 import { requestContext } from "./request-context.js";
@@ -77,6 +76,14 @@ async function registerConnectors(store: CortexStore): Promise<void> {
     );
   }
 
+  if (process.env["RECALL_API_KEY"]) {
+    imports.push(
+      import("./connectors/recall.js")
+        .then(({ RecallConnector }) => { registry.register(new RecallConnector()); })
+        .catch((err) => { console.error(`[cortex] Failed to load Recall connector: ${err?.message ?? err}`); }),
+    );
+  }
+
   await Promise.allSettled(imports);
 }
 
@@ -134,9 +141,8 @@ async function main() {
       return srv;
     }
 
-    const slackBotEnabled = process.env["SLACK_BOT_ENABLED"] === "true";
+    // Slack signing secret for message ingestion webhook verification
     const slackSigningSecret = process.env["SLACK_SIGNING_SECRET"] ?? "";
-    const slackToken = process.env["SLACK_TOKEN"] ?? "";
 
     const httpServer = createServer(async (req, res) => {
       // ── Health check ─────────────────────────────────────────────────────────
@@ -183,9 +189,9 @@ async function main() {
         return;
       }
 
-      // ── Slack Events API route ──────────────────────────────────────────────
-      if (slackBotEnabled && req.url === "/slack/events" && req.method === "POST") {
-        // Collect body bytes (needed for signature verification) — limit to 1MB
+      // ── Slack Events API route (message ingestion only — bot extracted to jarvis) ──
+      if (slackSigningSecret && req.url === "/slack/events" && req.method === "POST") {
+        // Collect body bytes — limit to 1MB
         const MAX_BODY_SIZE = 1_048_576;
         const chunks: Buffer[] = [];
         let totalSize = 0;
@@ -212,37 +218,48 @@ async function main() {
           return;
         }
 
-        // URL verification challenge (no signature required — Slack sends this during setup)
+        // URL verification challenge
         if (payload.type === "url_verification") {
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ challenge: payload.challenge }));
           return;
         }
 
-        // Verify Slack signature
+        // Verify Slack signature (inline — no bot import needed)
         const timestamp = req.headers["x-slack-request-timestamp"] as string | undefined;
         const signature = req.headers["x-slack-signature"] as string | undefined;
 
-        if (!timestamp || !signature || !verifySlackSignature(slackSigningSecret, timestamp, body, signature)) {
+        if (!timestamp || !signature) {
+          res.writeHead(401);
+          res.end("Invalid signature");
+          return;
+        }
+        const now = Math.floor(Date.now() / 1000);
+        if (Math.abs(now - parseInt(timestamp, 10)) > 300) {
+          res.writeHead(401);
+          res.end("Invalid signature");
+          return;
+        }
+        const { createHmac, timingSafeEqual } = await import("node:crypto");
+        const basestring = `v0:${timestamp}:${body}`;
+        const computed = `v0=${createHmac("sha256", slackSigningSecret).update(basestring).digest("hex")}`;
+        try {
+          if (!timingSafeEqual(Buffer.from(computed), Buffer.from(signature))) {
+            res.writeHead(401);
+            res.end("Invalid signature");
+            return;
+          }
+        } catch {
           res.writeHead(401);
           res.end("Invalid signature");
           return;
         }
 
-        // Ack immediately — Slack requires a response within 3 seconds
+        // Ack immediately
         res.writeHead(200);
         res.end();
 
-        // Process event asynchronously (after ack)
-        handleSlackEvent(
-          payload as Parameters<typeof handleSlackEvent>[0],
-          store,
-          slackToken,
-        ).catch((err: unknown) => {
-          console.error("[bumble-bee] Event handling error:", err);
-        });
-
-        // Ingest message events into hive-memory
+        // Ingest message events into hive-memory (memory layer — no bot handling)
         if ((payload as { event?: { type?: string } }).event?.type === "message") {
           import("./connectors/slack-webhook.js")
             .then(({ processSlackMessageEvent }) => {
@@ -259,6 +276,36 @@ async function main() {
             });
         }
 
+        return;
+      }
+
+      // ── Recall.ai webhook route ─────────────────────────────────────────────
+      if (req.url === "/recall/events" && req.method === "POST") {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const body = Buffer.concat(chunks).toString();
+
+        let payload: { event?: string; data?: unknown };
+        try {
+          payload = JSON.parse(body) as typeof payload;
+        } catch {
+          res.writeHead(400);
+          res.end("Bad Request");
+          return;
+        }
+
+        // Ack immediately
+        res.writeHead(200);
+        res.end();
+
+        // Process async
+        import("./connectors/recall.js")
+          .then(async ({ handleRecallWebhook }) => {
+            await handleRecallWebhook(payload, store);
+          })
+          .catch((err: unknown) => {
+            console.error("[recall] Webhook handling error:", err);
+          });
         return;
       }
 

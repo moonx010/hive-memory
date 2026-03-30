@@ -9,11 +9,11 @@ import { agenticRetrieve } from "../search/agentic-retrieval.js";
 export function registerMemoryTools(safeTool: SafeToolFn, store: CortexStore) {
   safeTool(
     "memory_store",
-    "Store a piece of knowledge, decision, or learning for a project. Auto-creates synapses (temporal, semantic, refinement) to related memories.",
+    "Store knowledge that is NOT derivable from git history. Good: decisions with rationale (WHY not WHAT), verbal/meeting agreements, cross-project insights, people/ownership context, debugging dead-ends worth remembering, design trade-offs considered but rejected. Bad: 'added feature X' or 'fixed bug Y' — git log already has those.",
     {
       project: z.string().describe("Project ID"),
       category: z.enum(["decision", "learning", "status", "note"]).describe("Type of memory to store"),
-      content: z.string().describe("The content to store"),
+      content: z.string().describe("The content to store — focus on context, rationale, and information that cannot be recovered from code or git history"),
       tags: z.array(z.string()).optional().describe("Optional tags for categorization"),
       agent: z.string().optional().describe("Agent identity (e.g. 'claude', 'codex') — tracks which agent stored this memory"),
     },

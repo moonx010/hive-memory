@@ -10,7 +10,8 @@ Stores entities (decisions, learnings, documents, conversations, people) in a SQ
 - MCP SDK (`@modelcontextprotocol/sdk`)
 - SQLite via `better-sqlite3` (FTS5 full-text search, WAL mode)
 - Storage: `~/.cortex/cortex.db` (SQLite) + legacy JSON fallback
-- No external services — everything runs locally
+- No outbound side effects — pure memory layer (inbound storage/search/enrichment only)
+- Agent behavior (Slack posting, meeting bot orchestration) lives in jarvis
 
 ## Architecture
 
@@ -80,12 +81,13 @@ Enable with `CORTEX_ACL=on`. When active, every query path (search, list, inspec
 - `src/store/context-sync.ts` — Cross-project insights + `.cortex.md` sync
 - `src/store/io.ts` — Atomic file I/O, `src/store/lock.ts` — File-based lock
 
-### Connectors (Phase 2-3)
+### Connectors (inbound-only data ingestion)
 - `src/connectors/types.ts` — ConnectorPlugin interface + registry
 - `src/connectors/github.ts` — GitHub: PRs, Issues, ADRs, CODEOWNERS
 - `src/connectors/slack.ts` — Slack: signal-filtered messages + threads
 - `src/connectors/notion.ts` — Notion: pages, databases, block content
 - `src/connectors/calendar.ts` — Google Calendar: events, attendees (OAuth2/service account)
+- `src/connectors/recall.ts` — Recall.ai: completed meeting transcripts (inbound sync only)
 
 ### Team (Phase 2)
 - `src/team/git-sync.ts` — Git-based team cortex (per-entry JSON files)
@@ -98,23 +100,29 @@ Enable with `CORTEX_ACL=on`. When active, every query path (search, list, inspec
 - `src/enrichment/llm/` — anthropic.ts, openai.ts, ollama.ts, budget.ts, index.ts
 - `src/enrichment/eval/` — decision-eval.ts, eval.ts (provider evaluation harness)
 
-### Meeting
-- `src/meeting/agent.ts` — MeetingAgent: transcript processing + pre-briefing generation
-- `src/meeting/transcript-parser.ts` — Speaker-turn transcript parser (plain text + SRT)
+### Meeting (memory-layer only — no outbound posting)
+- `src/meeting/agent.ts` — MeetingAgent: transcript → entities + enrichment + markdown (returns result, caller handles posting)
+- `src/meeting/transcript-parser.ts` — Speaker-turn transcript parser (plain text + SRT + VTT)
 
 ### Steward
 - `src/steward/index.ts` — MemorySteward: data quality audit + daily/weekly briefings
 
 ### Tools
-- `src/tools/index.ts` — Tool registration (all 30 tools)
+- `src/tools/index.ts` — Tool registration
 - `src/tools/browse-tools.ts` — ls, tree, grep, inspect, timeline
 - `src/tools/trail-tools.ts` — trail, who, decay
 - `src/tools/connector-tools.ts` — sync, status
 - `src/tools/team-tools.ts` — init, push, pull, status
 - `src/tools/context-tools.ts` — context_enrich, entity_resolve
-- `src/tools/meeting-tools.ts` — meeting_process, meeting_briefing
+- `src/tools/meeting-tools.ts` — meeting_process (returns markdown only), meeting_briefing
 - `src/tools/steward-tools.ts` — memory_audit, memory_briefing
 - `src/tools/memory-tools.ts`, `project-tools.ts`, `session-tools.ts` (v2)
+
+### Extracted to jarvis (agent layer — not in this repo)
+- Bumble Bee Slack bot (intent parsing, Slack posting, conversation)
+- Meeting output posting (Slack/Notion)
+- STT audio transcription (Whisper/Deepgram)
+- Recall.ai bot orchestration (join meetings, schedule bots)
 
 ### Hooks
 - `src/hooks/session-end.ts` — SessionEnd auto-capture
@@ -133,7 +141,7 @@ hive-memory team push/pull     # Team sync
 hive-memory hook session-end   # Auto session capture
 hive-memory cleanup            # Remove expired entries
 hive-memory enrich             # Run enrichment batch (--since, --type, --limit)
-hive-memory meeting <file>     # Process meeting transcript (--title, --output)
+hive-memory meeting <file>     # Process meeting transcript (--title, --output) — returns markdown only
 hive-memory audit              # Run memory data quality audit
 hive-memory briefing           # Generate daily/weekly briefing (--type daily|weekly)
 hive-memory user create <name> # Create a user + API key
@@ -146,6 +154,6 @@ hive-memory backup <path>      # Backup SQLite database
 
 ## Conventions
 - `src/` — TypeScript source
-- `tests/` — vitest tests (512 tests across 34 files)
+- `tests/` — vitest tests
 - Build: `npm run build`, Dev: `npm run dev`, Test: `npm test`
 - All new code uses SQLite; legacy JSON path kept for backward compat

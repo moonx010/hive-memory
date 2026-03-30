@@ -6,13 +6,13 @@ import type { SafeToolFn } from "./index.js";
 export function registerSessionTools(safeTool: SafeToolFn, store: CortexStore) {
   safeTool(
     "session_save",
-    "Save session progress for a project — what was done and what's next. Call this at the end of a work session.",
+    "Save session summary — focus on what git log CANNOT tell: decision rationale, rejected alternatives, verbal agreements, blockers, cross-project context, and next steps with reasoning. Skip listing commits or code changes.",
     {
       project: z.string().describe("Project ID"),
-      summary: z.string().describe("What was accomplished in this session"),
-      nextTasks: z.array(z.string()).optional().describe("Tasks to do next"),
-      decisions: z.array(z.string()).optional().describe("Decisions made during this session"),
-      learnings: z.array(z.string()).optional().describe("Things learned during this session"),
+      summary: z.string().describe("Session summary — focus on WHY decisions were made, not WHAT code changed (git has that)"),
+      nextTasks: z.array(z.string()).optional().describe("Tasks to do next, with context on priority or reasoning"),
+      decisions: z.array(z.string()).optional().describe("Decisions made — include the rationale and rejected alternatives, not just the outcome"),
+      learnings: z.array(z.string()).optional().describe("Non-obvious insights — things future sessions should know that aren't in the code"),
     },
     async (args) => {
       const projectId = args.project as string;
