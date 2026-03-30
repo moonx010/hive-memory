@@ -1,19 +1,13 @@
 /**
- * Recall.ai Connector — meeting bot that joins Google Meet/Zoom calls,
- * records audio, and retrieves transcripts for processing via MeetingAgent.
+ * Recall.ai Connector — inbound-only data ingestion.
  *
- * Features:
- * - Create bots to join meetings (manual or via calendar auto-join)
- * - Poll/webhook for recording completion
- * - Download and convert transcripts to VTT format
- * - Sync completed recordings as meeting entities
+ * Syncs completed meeting recordings from Recall.ai as meeting entities.
+ * Bot orchestration (join, schedule) lives in jarvis, not here.
  *
  * Environment variables:
  * - RECALL_API_KEY — API key from recall.ai dashboard
  * - RECALL_REGION — API region (default: us-west-2)
- * - RECALL_BOT_NAME — Bot display name (default: "Bumble Bee")
- * - RECALL_WEBHOOK_SECRET — Svix webhook signing secret (optional)
- * - MEETING_SLACK_CHANNEL — Slack channel for auto-posting notes
+ * - RECALL_WEBHOOK_SECRET — Svix webhook signing secret (required for /recall/events)
  */
 
 import type {
@@ -119,28 +113,7 @@ export class RecallClient {
     return (await res.json()) as T;
   }
 
-  /** Create a bot to join a meeting */
-  async createBot(opts: {
-    meetingUrl: string;
-    joinAt?: string;
-    metadata?: Record<string, unknown>;
-  }): Promise<RecallBot> {
-    return this.request<RecallBot>("POST", "/bot", {
-      meeting_url: opts.meetingUrl,
-      bot_name: this.botName,
-      ...(opts.joinAt ? { join_at: opts.joinAt } : {}),
-      ...(opts.metadata ? { metadata: opts.metadata } : {}),
-      recording_config: {
-        transcript: {
-          provider: { meeting_captions: {} },
-        },
-        participant_events: { metadata: {} },
-        meeting_metadata: { metadata: {} },
-      },
-    });
-  }
-
-  /** Get bot status and recordings */
+  /** Get bot status and recordings (inbound read-only) */
   async getBot(botId: string): Promise<RecallBot> {
     return this.request<RecallBot>("GET", `/bot/${botId}`);
   }
@@ -168,11 +141,6 @@ export class RecallClient {
       throw new Error(`Failed to download transcript: ${res.status}`);
     }
     return (await res.json()) as RecallTranscriptEntry[];
-  }
-
-  /** Remove bot from a call */
-  async leaveCall(botId: string): Promise<void> {
-    await this.request("POST", `/bot/${botId}/leave_call`);
   }
 
   /** Convert Recall transcript to VTT-style plaintext for MeetingAgent */
@@ -332,7 +300,7 @@ export class RecallConnector implements ConnectorPlugin {
         attributes: { displayName: speaker },
         source: {
           system: "recall",
-          externalId: `recall:speaker:${normalized}`,
+          externalId: `recall:speaker:${meta.botId}:${normalized}`,
           connector: "recall",
         },
         domain: "meetings",
@@ -348,20 +316,19 @@ export class RecallConnector implements ConnectorPlugin {
   }
 
   postSync(db: HiveDatabase, entityMap: Map<string, string>): void {
-    // Create "attended" synapses between speakers and meetings
+    // Create "attended" synapses — match speaker to their specific meeting via botId
     for (const [externalId, entityId] of entityMap) {
-      if (externalId.startsWith("recall:speaker:")) {
-        // Find the meeting this speaker belongs to — look for meeting entities
-        for (const [meetingExtId, meetingEntityId] of entityMap) {
-          if (meetingExtId.startsWith("recall:bot:")) {
-            db.upsertSynapse({
-              sourceId: entityId,
-              targetId: meetingEntityId,
-              axon: "attended",
-              weight: 1.0,
-            });
-          }
-        }
+      const speakerMatch = externalId.match(/^recall:speaker:([^:]+):/);
+      if (!speakerMatch) continue;
+      const botId = speakerMatch[1];
+      const meetingEntityId = entityMap.get(`recall:bot:${botId}`);
+      if (meetingEntityId) {
+        db.upsertSynapse({
+          sourceId: entityId,
+          targetId: meetingEntityId,
+          axon: "attended",
+          weight: 1.0,
+        });
       }
     }
   }

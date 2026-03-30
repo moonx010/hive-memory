@@ -281,9 +281,48 @@ async function main() {
 
       // ── Recall.ai webhook route ─────────────────────────────────────────────
       if (req.url === "/recall/events" && req.method === "POST") {
+        const recallSecret = process.env["RECALL_WEBHOOK_SECRET"];
+        if (!recallSecret) {
+          res.writeHead(403);
+          res.end("Recall webhook not configured");
+          return;
+        }
+
+        const MAX_BODY_SIZE = 1_048_576;
         const chunks: Buffer[] = [];
-        for await (const chunk of req) chunks.push(chunk as Buffer);
+        let totalSize = 0;
+        let oversized = false;
+        for await (const chunk of req) {
+          totalSize += (chunk as Buffer).length;
+          if (totalSize > MAX_BODY_SIZE) { oversized = true; break; }
+          chunks.push(chunk as Buffer);
+        }
+        if (oversized) {
+          res.writeHead(413);
+          res.end("Payload Too Large");
+          return;
+        }
         const body = Buffer.concat(chunks).toString();
+
+        // Svix signature verification
+        const svixId = req.headers["svix-id"] as string | undefined;
+        const svixTimestamp = req.headers["svix-timestamp"] as string | undefined;
+        const svixSignature = req.headers["svix-signature"] as string | undefined;
+        if (!svixId || !svixTimestamp || !svixSignature) {
+          res.writeHead(401);
+          res.end("Missing signature headers");
+          return;
+        }
+        const { createHmac: hmac } = await import("node:crypto");
+        const signedContent = `${svixId}.${svixTimestamp}.${body}`;
+        const secret = Buffer.from(recallSecret.replace("whsec_", ""), "base64");
+        const computed = hmac("sha256", secret).update(signedContent).digest("base64");
+        const signatures = svixSignature.split(" ").map((s: string) => s.split(",")[1] ?? "");
+        if (!signatures.includes(computed)) {
+          res.writeHead(401);
+          res.end("Invalid signature");
+          return;
+        }
 
         let payload: { event?: string; data?: unknown };
         try {
