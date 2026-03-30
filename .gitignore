@@ -20,7 +20,9 @@ native/node_modules/
 # Smithery build artifacts
 .smithery/
 
-# AI tool configs (openspec-generated)
+# AI tool configs (may contain auth tokens)
 .claude/
 .codex/
+.mcp.json
+.mcp*.json
 coverage/
