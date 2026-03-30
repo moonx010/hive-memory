@@ -9,6 +9,7 @@
 
 import type { ConnectorPlugin, RawDocument, EntityDraft } from "./types.js";
 import type { CheckpointManager } from "./checkpoint.js";
+import type { HiveDatabase } from "../db/database.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -126,6 +127,7 @@ export class GitHubConnector implements ConnectorPlugin {
   private cursor: string | undefined;
   private readonly token: string;
   private readonly repos: string[];
+  private _syncedPRExternalIds: Array<{ docExternalId: string; authorLogin: string }> = [];
 
   constructor() {
     this.token = process.env.GITHUB_TOKEN ?? "";
@@ -164,6 +166,7 @@ export class GitHubConnector implements ConnectorPlugin {
 
   private async *_syncAll(since?: string, checkpoint?: CheckpointManager): AsyncGenerator<RawDocument> {
     this.cursor = new Date().toISOString();
+    this._syncedPRExternalIds = [];
 
     for (const repo of this.repos) {
       yield* this._syncPRs(repo, since, checkpoint);
@@ -199,6 +202,14 @@ export class GitHubConnector implements ConnectorPlugin {
           checkpoint?.updateStream(streamId, { complete: true });
           checkpoint?.flush();
           return;
+        }
+
+        // Track for postSync synapse creation
+        if (pr.user?.login) {
+          this._syncedPRExternalIds.push({
+            docExternalId: `github:pr:${repo}:${pr.number}`,
+            authorLogin: pr.user.login,
+          });
         }
 
         yield {
@@ -269,6 +280,14 @@ export class GitHubConnector implements ConnectorPlugin {
           checkpoint?.updateStream(streamId, { complete: true });
           checkpoint?.flush();
           return;
+        }
+
+        // Track for postSync synapse creation
+        if (issue.user?.login) {
+          this._syncedPRExternalIds.push({
+            docExternalId: `github:issue:${repo}:${issue.number}`,
+            authorLogin: issue.user.login,
+          });
         }
 
         yield {
@@ -638,5 +657,21 @@ export class GitHubConnector implements ConnectorPlugin {
       domain: "code",
       confidence: "inferred",
     };
+  }
+
+  postSync(db: HiveDatabase, entityMap: Map<string, string>): void {
+    // Create "authored" synapses: person → document/task
+    for (const { docExternalId, authorLogin } of this._syncedPRExternalIds) {
+      const docId = entityMap.get(docExternalId);
+      const personId = entityMap.get(`github:person:${authorLogin}`);
+      if (!docId || !personId) continue;
+
+      db.upsertSynapse({
+        sourceId: personId,
+        targetId: docId,
+        axon: "authored",
+        weight: 1.0,
+      });
+    }
   }
 }

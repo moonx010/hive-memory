@@ -236,6 +236,26 @@ export function createSchema(db: Database): void {
       BEFORE UPDATE ON audit_log BEGIN
         SELECT RAISE(ABORT, 'Audit log entries cannot be modified');
       END;
+
+    -- ── domain_schemas (extensible entity/axon type registry) ──────────────
+    CREATE TABLE IF NOT EXISTS domain_schemas (
+      domain      TEXT NOT NULL,
+      kind        TEXT NOT NULL CHECK(kind IN ('entity_type', 'axon_type')),
+      value       TEXT NOT NULL,
+      description TEXT,
+      constraints TEXT NOT NULL DEFAULT '{}',
+      PRIMARY KEY (domain, kind, value)
+    );
+
+    -- Cross-tenant synapse isolation: only fires when BOTH entities have org_id set
+    CREATE TRIGGER IF NOT EXISTS synapses_cross_tenant_check
+    BEFORE INSERT ON synapses
+    WHEN (SELECT org_id FROM entities WHERE id = NEW.source) IS NOT NULL
+      AND (SELECT org_id FROM entities WHERE id = NEW.target) IS NOT NULL
+      AND (SELECT org_id FROM entities WHERE id = NEW.source) != (SELECT org_id FROM entities WHERE id = NEW.target)
+    BEGIN
+      SELECT RAISE(ABORT, 'Cross-tenant synapse forbidden');
+    END;
   `);
 
   // Run column migrations only when upgrading from an older schema version

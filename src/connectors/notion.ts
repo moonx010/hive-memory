@@ -10,6 +10,7 @@
 
 import type { ConnectorPlugin, RawDocument, EntityDraft } from "./types.js";
 import type { CheckpointManager } from "./checkpoint.js";
+import type { HiveDatabase } from "../db/database.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -247,6 +248,7 @@ export class NotionConnector implements ConnectorPlugin {
   private readonly token: string;
   private readonly databases: string[];
   private readonly pages: string[];
+  private _syncedPageParents: Array<{ pageExternalId: string; parentPageId: string }> = [];
 
   constructor() {
     this.token = process.env.NOTION_TOKEN ?? "";
@@ -285,6 +287,7 @@ export class NotionConnector implements ConnectorPlugin {
   }
 
   private async *_searchAll(since?: string, checkpoint?: CheckpointManager): AsyncGenerator<RawDocument> {
+    this._syncedPageParents = [];
     if (this.databases.length > 0) {
       for (const dbId of this.databases) {
         yield* this._queryDatabase(dbId, since, checkpoint);
@@ -413,6 +416,14 @@ export class NotionConnector implements ConnectorPlugin {
       const content = await this._fetchBlockContent(page.id);
       const fullContent = content.trim() || title;
 
+      // Track parent-child page relationships for postSync
+      if (page.parent.type === "page_id" && page.parent.page_id) {
+        this._syncedPageParents.push({
+          pageExternalId: `notion:page:${page.id}`,
+          parentPageId: page.parent.page_id,
+        });
+      }
+
       return {
         externalId: `notion:page:${page.id}`,
         source: "notion",
@@ -518,5 +529,21 @@ export class NotionConnector implements ConnectorPlugin {
     return Object.values(props).some(
       (p) => p.type === "status" || p.type === "checkbox" || p.type === "select",
     );
+  }
+
+  postSync(db: HiveDatabase, entityMap: Map<string, string>): void {
+    // Create "child_of" synapses: child page → parent page
+    for (const { pageExternalId, parentPageId } of this._syncedPageParents) {
+      const childId = entityMap.get(pageExternalId);
+      const parentId = entityMap.get(`notion:page:${parentPageId}`);
+      if (!childId || !parentId) continue;
+
+      db.upsertSynapse({
+        sourceId: childId,
+        targetId: parentId,
+        axon: "child_of",
+        weight: 1.0,
+      });
+    }
   }
 }

@@ -1,11 +1,19 @@
 import type { HiveDatabase } from "../../db/database.js";
-import type { Entity, LLMProvider } from "../types.js";
+import type {
+  Entity,
+  EnrichmentContext,
+  EnrichmentProvider,
+  EnrichmentResult,
+  LLMProvider,
+} from "../types.js";
 
 export interface StitchResult {
   candidates: number;
   pairs: number;
   linked: number;
 }
+
+const STITCH_LOOKBACK_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function computeJaccard(a: string[], b: string[]): number {
   const setA = new Set(a.slice(0, 5));
@@ -15,11 +23,50 @@ function computeJaccard(a: string[], b: string[]): number {
   return union === 0 ? 0 : intersection / union;
 }
 
-export class TopicStitcher {
+export class TopicStitcher implements EnrichmentProvider {
+  readonly id = "topic-stitch";
+  readonly name = "TopicStitcher";
+  readonly applicableTo: ["*"] = ["*"];
+  readonly priority = 300;
+  readonly stage = "stitch" as const;
+
   constructor(
     private db: HiveDatabase,
     private llm?: LLMProvider,
   ) {}
+
+  shouldEnrich(entity: Entity): boolean {
+    if ((entity.keywords ?? []).length === 0) return false;
+    const createdAt = new Date(entity.createdAt).getTime();
+    return Date.now() - createdAt < STITCH_LOOKBACK_MS;
+  }
+
+  async enrich(entity: Entity, _ctx: EnrichmentContext): Promise<EnrichmentResult> {
+    const minJaccard = 0.4;
+    const candidates = this.db.listEntities({ hasKeywords: true, limit: 500 });
+    const entityKeywords = entity.keywords ?? [];
+
+    const synapses: EnrichmentResult["synapses"] = [];
+    for (const candidate of candidates) {
+      if (candidate.id === entity.id) continue;
+      const score = computeJaccard(entityKeywords, candidate.keywords ?? []);
+      if (score < minJaccard) continue;
+
+      let finalScore = score;
+      if (this.llm && score < 0.7) {
+        try {
+          finalScore = await this.confirmWithLLM(entity, candidate);
+          if (finalScore < 0.5) continue;
+        } catch {
+          finalScore = score;
+        }
+      }
+
+      synapses.push({ targetId: candidate.id, axon: "related", weight: finalScore });
+    }
+
+    return { synapses };
+  }
 
   async stitchBatch(
     opts: { limit?: number; minJaccard?: number } = {},
