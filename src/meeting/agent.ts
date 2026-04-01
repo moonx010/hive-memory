@@ -189,6 +189,9 @@ export class MeetingAgent {
     // 9. Render markdown
     const markdownOutput = this.renderMarkdown(meetingEntityId, parsed, opts);
 
+    // 10. Store markdown on entity for external consumers (e.g. Slack posting)
+    this.db.updateEntityAttributes(meetingEntityId, { markdownOutput });
+
     return {
       meetingEntityId,
       speakers: allSpeakers,
