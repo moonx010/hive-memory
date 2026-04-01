@@ -445,6 +445,23 @@ export async function handleRecallWebhook(
         `[recall] Meeting processed: ${result.meetingEntityId} ` +
         `(${result.decisionsCreated} decisions, ${result.actionsCreated} actions)`,
       );
+
+      // Notify external hooks (fire-and-forget)
+      import("../hooks/notify.js")
+        .then(({ notifyHooks }) =>
+          notifyHooks({
+            event: "meeting.processed",
+            entityId: result.meetingEntityId,
+            timestamp: new Date().toISOString(),
+            meta: {
+              title,
+              speakers,
+              decisionsCreated: result.decisionsCreated,
+              actionsCreated: result.actionsCreated,
+            },
+          }),
+        )
+        .catch((err) => console.error("[recall] Hook notification error:", err));
     } catch (err) {
       console.error(`[recall] Failed to process recording for bot ${botId}:`, err);
     }
