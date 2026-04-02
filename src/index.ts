@@ -440,6 +440,18 @@ async function main() {
           console.error(`[auto-sync] enrichment failed: ${err}`);
         }
 
+        // Daily compaction (auto-link, merge dupes, prune weak edges)
+        try {
+          const { runCompaction } = await import("./pipeline/compaction.js");
+          const compactResult = runCompaction(store.database, { dryRun: false });
+          const { linksCreated, duplicatesMerged, edgesPruned, entitiesArchived, orphansRemoved } = compactResult;
+          if (linksCreated + duplicatesMerged + edgesPruned + entitiesArchived + orphansRemoved > 0) {
+            console.error(`[auto-compact] links=${linksCreated} merged=${duplicatesMerged} pruned=${edgesPruned} archived=${entitiesArchived} orphans=${orphansRemoved} (${compactResult.duration}ms)`);
+          }
+        } catch (err) {
+          console.error(`[auto-compact] Compaction failed: ${err}`);
+        }
+
         // Daily backup (check if last backup was >24h ago)
         const backupDir = process.env.CORTEX_BACKUP_DIR ?? join(process.env.CORTEX_DATA_DIR ?? "", "backups");
         try {

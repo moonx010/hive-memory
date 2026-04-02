@@ -310,4 +310,55 @@ export function registerTrailTools(safeTool: SafeToolFn, db: HiveDatabase) {
       return { content: [{ type: "text" as const, text: lines.join("\n") }] };
     },
   );
+
+  // ── memory_compact ──
+
+  safeTool(
+    "memory_compact",
+    "Run knowledge graph compaction: auto-link semantically similar entities, merge exact duplicates, prune weak edges, archive stale nodes. Keeps the graph healthy and queryable.",
+    {
+      dry_run: z
+        .boolean()
+        .optional()
+        .describe("Preview only — do not apply changes (default true)"),
+      link_threshold: z
+        .number()
+        .optional()
+        .describe("Min keyword Jaccard similarity to create semantic link (default 0.4)"),
+      edge_prune_weight: z
+        .number()
+        .optional()
+        .describe("Prune synapses below this weight (default 0.05)"),
+      stale_days: z
+        .number()
+        .optional()
+        .describe("Archive entities not updated in N days with 0-1 connections (default 180)"),
+    },
+    async (args) => {
+      const { runCompaction } = await import("../pipeline/compaction.js");
+      const result = runCompaction(db, {
+        dryRun: (args.dry_run as boolean | undefined) ?? true,
+        linkThreshold: args.link_threshold as number | undefined,
+        edgePruneWeight: args.edge_prune_weight as number | undefined,
+        staleDays: args.stale_days as number | undefined,
+      });
+
+      const mode = ((args.dry_run as boolean | undefined) ?? true) ? "DRY RUN" : "APPLIED";
+      const lines = [
+        `Memory Compaction (${mode}) — ${result.duration}ms`,
+        ``,
+        `  Semantic links created:  ${result.linksCreated}`,
+        `  Duplicates merged:       ${result.duplicatesMerged}`,
+        `  Weak edges pruned:       ${result.edgesPruned}`,
+        `  Stale entities archived: ${result.entitiesArchived}`,
+        `  Orphans removed:         ${result.orphansRemoved}`,
+      ];
+
+      if ((args.dry_run as boolean | undefined) ?? true) {
+        lines.push(``, `Run with dry_run=false to apply.`);
+      }
+
+      return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+    },
+  );
 }
