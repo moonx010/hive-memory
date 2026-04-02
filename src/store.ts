@@ -762,21 +762,19 @@ export class CortexStore {
     return { added, updated, skipped, archived, errors, lastError };
   }
 
-  /** Simple keyword extraction (reuses hive-index logic) */
+  /** YAKE-based keyword extraction — stopword-free, discriminative keywords */
   private _extractKeywords(text: string): string[] {
-    const lower = text.toLowerCase();
-    const words = lower
-      .split(/[\s,;:!?.()[\]{}"'`~@#$%^&*+=<>|/\\]+/)
-      .filter(w => {
-        if (!w || w.length === 0) return false;
-        if (/^[a-z0-9-]+$/.test(w)) return w.length > 2;
-        return true;
-      });
-    const freq = new Map<string, number>();
-    for (const w of words) freq.set(w, (freq.get(w) ?? 0) + 1);
-    return [...freq.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
-      .map(([word]) => word);
+    // Dynamic import to avoid circular dependency at module load time
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { extractKeywordsFromText } = require("./keywords/extractor.js") as typeof import("./keywords/extractor.js");
+      return extractKeywordsFromText(text, { maxKeywords: 15, maxNgram: 2 });
+    } catch {
+      // Fallback: basic extraction if YAKE module not available
+      return text.toLowerCase()
+        .split(/[\s,;:!?.()[\]{}"'`~@#$%^&*+=<>|/\\]+/)
+        .filter(w => w && w.length > 3)
+        .slice(0, 10);
+    }
   }
 }

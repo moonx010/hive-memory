@@ -361,4 +361,22 @@ export function registerTrailTools(safeTool: SafeToolFn, db: HiveDatabase) {
       return { content: [{ type: "text" as const, text: lines.join("\n") }] };
     },
   );
+
+  // ── memory_reindex ──
+
+  safeTool(
+    "memory_reindex",
+    "Re-extract keywords for all entities using YAKE (statistical keyword extraction). Replaces stopword-polluted keywords with clean, discriminative ones. Run this before memory_compact for best results.",
+    {},
+    async () => {
+      const { reextractAllKeywords } = await import("../keywords/extractor.js");
+      const result = reextractAllKeywords(db);
+      return {
+        content: [{
+          type: "text" as const,
+          text: `Keyword re-extraction complete.\n  Processed: ${result.processed}\n  Updated: ${result.updated}`,
+        }],
+      };
+    },
+  );
 }
