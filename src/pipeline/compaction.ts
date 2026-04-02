@@ -51,11 +51,17 @@ export function runCompaction(
   const start = Date.now();
   const o = { ...DEFAULT_OPTIONS, ...opts };
 
-  const linksCreated = semanticAutoLink(db, o);
-  const duplicatesMerged = mergeDuplicates(db, o);
-  const edgesPruned = pruneWeakEdges(db, o);
-  const entitiesArchived = archiveStale(db, o);
-  const orphansRemoved = removeOrphans(db, o);
+  let linksCreated = 0;
+  let duplicatesMerged = 0;
+  let edgesPruned = 0;
+  let entitiesArchived = 0;
+  let orphansRemoved = 0;
+
+  try { linksCreated = semanticAutoLink(db, o); } catch (e) { console.error("[compact] auto-link failed:", e); }
+  try { duplicatesMerged = mergeDuplicates(db, o); } catch (e) { console.error("[compact] merge failed:", e); }
+  try { edgesPruned = pruneWeakEdges(db, o); } catch (e) { console.error("[compact] prune failed:", e); }
+  try { entitiesArchived = archiveStale(db, o); } catch (e) { console.error("[compact] archive failed:", e); }
+  try { orphansRemoved = removeOrphans(db, o); } catch (e) { console.error("[compact] orphan cleanup failed:", e); }
 
   return {
     linksCreated,
