@@ -173,10 +173,8 @@ async function main() {
         return;
       }
 
-      // ── Dashboard ────────────────────────────────────────────────────────────
+      // ── Dashboard (HTML shell served without auth — API calls require token) ─
       if (req.url === "/dashboard" && req.method === "GET") {
-        const { authorized: dashAuth } = resolveAuth(store.database, req.headers.authorization, authToken);
-        if (!dashAuth) { res.writeHead(401); res.end("Unauthorized"); return; }
         const { DASHBOARD_HTML } = await import("./dashboard/html.js");
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(DASHBOARD_HTML);
