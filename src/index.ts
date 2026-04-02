@@ -173,6 +173,33 @@ async function main() {
         return;
       }
 
+      // ── Dashboard ────────────────────────────────────────────────────────────
+      if (req.url === "/dashboard" && req.method === "GET") {
+        const { authorized: dashAuth } = resolveAuth(store.database, req.headers.authorization, authToken);
+        if (!dashAuth) { res.writeHead(401); res.end("Unauthorized"); return; }
+        const { DASHBOARD_HTML } = await import("./dashboard/html.js");
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(DASHBOARD_HTML);
+        return;
+      }
+
+      // ── Dashboard API ──────────────────────────────────────────────────────────
+      if (req.url?.startsWith("/api/") && req.method === "GET") {
+        const { authorized: apiAuth } = resolveAuth(store.database, req.headers.authorization, authToken);
+        if (!apiAuth) { res.writeHead(401); res.end("Unauthorized"); return; }
+        const { handleApiRequest } = await import("./dashboard/api.js");
+        const url = new URL(req.url, `http://localhost:${port}`);
+        try {
+          const result = handleApiRequest(store.database, url.pathname, url.searchParams);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(result));
+        } catch (err) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: String(err) }));
+        }
+        return;
+      }
+
       // ── Gateway status endpoint (auth required) ─────────────────────────────
       if (req.url === "/gateway/status" && req.method === "GET") {
         if (authToken) {
