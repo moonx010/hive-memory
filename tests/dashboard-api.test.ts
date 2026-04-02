@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { randomUUID } from "node:crypto";
 import { HiveDatabase } from "../src/db/database.js";
 import { handleApiRequest } from "../src/dashboard/api.js";
 import type { Entity } from "../src/types.js";
@@ -6,7 +7,7 @@ import type { Entity } from "../src/types.js";
 function makeEntity(overrides: Partial<Entity> = {}): Entity {
   const now = new Date().toISOString();
   return {
-    id: crypto.randomUUID(),
+    id: randomUUID(),
     entityType: "memory",
     namespace: "local",
     content: "test content",
@@ -37,7 +38,7 @@ describe("Dashboard API", () => {
     db.insertEntity(e2);
     db.insertEntity(e3);
     db.insertSynapse({
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       source: e1.id,
       target: e2.id,
       axon: "semantic",
