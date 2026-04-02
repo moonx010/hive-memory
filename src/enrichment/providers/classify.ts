@@ -5,6 +5,7 @@ import type {
   EnrichmentResult,
   EnrichmentStage,
 } from "../types.js";
+import { extractKeywordsFromText } from "../../keywords/extractor.js";
 
 const CODE_PATTERNS = [
   /\bfunction\b/,
@@ -84,6 +85,10 @@ export class ClassifyProvider implements EnrichmentProvider {
     // Decision marker
     if (DECISION_PATTERNS.some((p) => p.test(content))) tags.push("decision");
 
-    return { attributes, tags };
+    // YAKE keyword extraction
+    const text = (entity.title ? entity.title + ". " : "") + content;
+    const keywords = extractKeywordsFromText(text, { maxKeywords: 15, maxNgram: 2 });
+
+    return { attributes, tags, keywords };
   }
 }
