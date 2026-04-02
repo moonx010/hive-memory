@@ -85,12 +85,18 @@ function semanticAutoLink(db: HiveDatabase, o: Required<CompactionOptions>): num
     )
     .all({ limit: o.batchSize }) as Array<{ id: string; keywords: string; project: string | null }>;
 
-  // Parse keywords
-  const parsed = entities.map((e) => ({
-    id: e.id,
-    project: e.project,
-    keywords: new Set<string>(JSON.parse(e.keywords) as string[]),
-  }));
+  // Parse keywords (skip entities with unparseable keywords)
+  const parsed: Array<{ id: string; project: string | null; keywords: Set<string> }> = [];
+  for (const e of entities) {
+    try {
+      const kw = JSON.parse(e.keywords) as string[];
+      if (Array.isArray(kw) && kw.length > 0) {
+        parsed.push({ id: e.id, project: e.project, keywords: new Set(kw) });
+      }
+    } catch {
+      // Skip entities with malformed keywords
+    }
+  }
 
   // Load existing synapse pairs to avoid duplicates
   const existingPairs = new Set<string>();
